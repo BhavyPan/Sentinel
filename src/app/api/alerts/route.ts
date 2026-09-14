@@ -1,0 +1,41 @@
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { toAlertDTO } from "@/lib/summary";
+
+export const dynamic = "force-dynamic";
+
+/** GET /api/alerts — list normalized alerts with filters */
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const source = searchParams.get("source") || undefined;
+    const severity = searchParams.get("severity") || undefined;
+    const correlated = searchParams.get("correlated");
+    const search = (searchParams.get("search") || "").trim().toLowerCase();
+    const limitRaw = parseInt(searchParams.get("limit") || "200", 10);
+    const limit = Math.max(1, Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200));
+
+    const rows = await db.alert.findMany({
+      where: {
+        ...(source ? { source } : {}),
+        ...(severity ? { rawSeverity: severity } : {}),
+        ...(correlated === "true" ? { incidentId: { not: null } } : {}),
+        ...(correlated === "false" ? { incidentId: null } : {}),
+      },
+      orderBy: { timestamp: "desc" },
+    });
+
+    const filtered = search
+      ? rows.filter((a) =>
+          [a.alertId, a.description, a.user, a.device, a.ip, a.event, a.source]
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(search))
+        )
+      : rows;
+
+    return NextResponse.json({ alerts: filtered.slice(0, limit).map(toAlertDTO) });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to list alerts";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

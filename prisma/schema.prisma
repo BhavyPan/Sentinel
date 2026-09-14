@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Normalized security alert (F2: one common structure for every incoming alert)
+model Alert {
+  id          String    @id @default(cuid())
+  alertId     String    @unique // e.g. "A1042"
+  source      String // siem | firewall | edr | ids | auth | satellite | intel-report | sensor | waf | scanner
+  sourceLabel String    @default("") // display name of the source system
+  timestamp   DateTime
+  user        String?
+  device      String?
+  ip          String?
+  event       String // machine event key e.g. "multiple_failed_logins"
+  description String
+  rawSeverity String    @default("medium")
+  rawFormat   String    @default("json") // json | csv | text
+  metadata    String    @default("{}") // JSON string: iocs, extra fields
+  incidentId  String?
+  incident    Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([timestamp])
+  @@index([source])
+  @@index([incidentId])
+}
+
+// Correlated incident (F3..F9)
+model Incident {
+  id                 String    @id @default(cuid())
+  incidentId         String    @unique // e.g. "INC-1001"
+  title              String    @default("Uncorrelated incident")
+  classification     String    @default("Under Review") // Genuine Threat | False Positive | Under Review
+  severity           String    @default("Medium") // Critical | High | Medium | Low | False Positive
+  threatScore        Int       @default(0) // 0..100 deterministic
+  confidence         Int       @default(0) // 0..100
+  mitre              String    @default("[]") // JSON: MitreTechnique[]
+  bluf               String?
+  explanation        String?
+  evidence           String    @default("[]") // JSON: string[]
+  recommendedActions String    @default("[]") // JSON: string[]
+  status             String    @default("Open") // Open | Investigating | Contained | Resolved
+  analyzed           Boolean   @default(false) // true once LLM analysis ran
+  riskSignals        String    @default("[]") // JSON: {signal, points}[] — deterministic scoring breakdown
+  alerts             Alert[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+// AI Copilot chat history
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      String // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+}
