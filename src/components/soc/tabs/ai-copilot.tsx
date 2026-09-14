@@ -4,14 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
-import { Bot, Eraser, SendHorizonal, ShieldQuestion, Sparkles, User } from "lucide-react";
+import { ArrowUpRight, Bot, Eraser, SendHorizonal, ShieldQuestion, Sparkles, User } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiGet, apiSend } from "@/lib/api-client";
 import { timeAgo } from "@/lib/ui-helpers";
-import type { ChatHistory, CopilotChatResult, DashboardSummary } from "@/lib/types";
+import type { ChatHistory, CopilotChatResult, DashboardSummary, IncidentDTO } from "@/lib/types";
+import { useSocStore } from "@/store/soc-store";
 import { useCopilotStore } from "@/store/copilot-store";
 import { cn } from "@/lib/utils";
 
@@ -39,8 +40,45 @@ function TypingDots() {
   );
 }
 
+/**
+ * Clickable incident reference (INC-1001) inside an assistant message —
+ * resolves the display id to the incident db id via the shared incidents
+ * cache and jumps to the Analysis tab.
+ */
+function IncidentChip({ displayId }: { displayId: string }) {
+  const openIncident = useSocStore((s) => s.openIncident);
+  const incidentsQuery = useQuery({
+    queryKey: ["incidents"],
+    queryFn: () => apiGet<unknown>("/api/incidents"),
+    staleTime: 10_000,
+  });
+  const match = ((incidentsQuery.data as { incidents?: IncidentDTO[] } | undefined)?.incidents ?? []).find(
+    (i) => i.incidentId === displayId
+  );
+
+  if (!match) {
+    return (
+      <span className="font-mono text-[13px] font-semibold text-emerald-300/90">{displayId}</span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => openIncident(match.id)}
+      title={`Open ${displayId} in Incident Analysis`}
+      className="inline-flex translate-y-px items-center gap-0.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-px font-mono text-[12px] font-bold text-emerald-300 transition-colors hover:bg-emerald-500/20 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {displayId}
+      <ArrowUpRight className="size-3" aria-hidden="true" />
+    </button>
+  );
+}
+
 function Bubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === "user";
+  // assistant messages may reference incidents — split on INC-XXXX tokens and
+  // render each mention as a clickable deep-link chip
+  const parts = isUser ? null : msg.content.split(/(INC-\d{3,5})/g);
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -63,7 +101,19 @@ function Bubble({ msg }: { msg: ChatMsg }) {
         role={isUser ? undefined : "figure"}
         aria-label={isUser ? "Your message" : "Copilot message"}
       >
-        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+        {parts ? (
+          <p className="whitespace-pre-wrap break-words">
+            {parts.map((part, i) =>
+              /^INC-\d{3,5}$/.test(part) ? (
+                <IncidentChip key={`${msg.id}-${i}`} displayId={part} />
+              ) : (
+                <span key={`${msg.id}-${i}`}>{part}</span>
+              )
+            )}
+          </p>
+        ) : (
+          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+        )}
       </div>
       {isUser && (
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted">
@@ -332,7 +382,7 @@ export function AiCopilot() {
           <Button
             type="submit"
             size="icon"
-            className="size-11 shrink-0 border-emerald-500/50 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+            className="size-11 shrink-0 border-emerald-500/50 bg-emerald-500/15 text-emerald-300 transition-transform hover:bg-emerald-500/25 hover:text-emerald-200 active:scale-95 disabled:active:scale-100"
             disabled={sending || input.trim().length === 0}
             aria-label="Send message"
           >

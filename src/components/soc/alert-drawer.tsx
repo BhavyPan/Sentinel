@@ -12,6 +12,7 @@ import {
   Globe,
   Link2,
   Loader2,
+  LocateFixed,
   MonitorSmartphone,
   Plus,
   TriangleAlert,
@@ -36,15 +37,19 @@ import { formatDateTime, timeAgo } from "@/lib/ui-helpers";
 import { useSocStore } from "@/store/soc-store";
 import { cn } from "@/lib/utils";
 
-/** One key/value row in the entity grid */
+/** One key/value row in the entity grid — with a "locate in graph" action. */
 function EntityRow({
   icon: Icon,
   label,
   value,
+  entityType,
+  onLocate,
 }: {
   icon: typeof User;
   label: string;
   value: string | null;
+  entityType?: "user" | "device" | "ip";
+  onLocate?: () => void;
 }) {
   return (
     <div className="flex items-start gap-2.5 rounded-lg border border-border/70 bg-background/40 px-3 py-2">
@@ -55,7 +60,7 @@ function EntityRow({
         )}
         aria-hidden="true"
       />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           {label}
         </p>
@@ -67,6 +72,19 @@ function EntityRow({
           <p className="font-mono text-xs text-muted-foreground/50">not present</p>
         )}
       </div>
+      {value && entityType && onLocate && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 text-muted-foreground transition-colors hover:border-sky-500/40 hover:text-sky-300"
+          onClick={onLocate}
+          aria-label={`Locate ${entityType} ${value} in the Threat Graph`}
+          title="Locate in Threat Graph — highlights every incident this entity appears in"
+        >
+          <LocateFixed className="size-3.5" aria-hidden="true" />
+        </Button>
+      )}
     </div>
   );
 }
@@ -157,6 +175,7 @@ export function AlertDrawer({
   onClose: () => void;
 }) {
   const openIncident = useSocStore((s) => s.openIncident);
+  const focusEntityInGraph = useSocStore((s) => s.focusEntityInGraph);
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
 
@@ -270,9 +289,27 @@ export function AlertDrawer({
 
                 {/* entities */}
                 <section aria-label="Entities" className="grid grid-cols-1 gap-2">
-                  <EntityRow icon={User} label="User" value={alert.user} />
-                  <EntityRow icon={MonitorSmartphone} label="Device" value={alert.device} />
-                  <EntityRow icon={Globe} label="IP address" value={alert.ip} />
+                  <EntityRow
+                    icon={User}
+                    label="User"
+                    value={alert.user}
+                    entityType="user"
+                    onLocate={() => focusEntityInGraph("user", alert.user as string)}
+                  />
+                  <EntityRow
+                    icon={MonitorSmartphone}
+                    label="Device"
+                    value={alert.device}
+                    entityType="device"
+                    onLocate={() => focusEntityInGraph("device", alert.device as string)}
+                  />
+                  <EntityRow
+                    icon={Globe}
+                    label="IP address"
+                    value={alert.ip}
+                    entityType="ip"
+                    onLocate={() => focusEntityInGraph("ip", alert.ip as string)}
+                  />
                 </section>
 
                 {/* description */}

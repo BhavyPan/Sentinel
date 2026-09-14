@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { motion } from "framer-motion";
 import {
   ArrowRightLeft,
+  Bot,
   CheckCircle2,
   Copy,
   Crosshair,
@@ -680,6 +681,7 @@ function loadAnalystName(): string {
 function DetailPane({ incidentId }: { incidentId: string }) {
   const queryClient = useQueryClient();
   const focusIncidentInGraph = useSocStore((s) => s.focusIncidentInGraph);
+  const askQuestion = useSocStore((s) => s.askQuestion);
 
   const detailQuery = useQuery({
     queryKey: ["incident", incidentId],
@@ -865,6 +867,22 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                 >
                   <Waypoints className="size-3.5" aria-hidden="true" />
                   Threat Graph
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 gap-1.5 border-sky-500/40 text-sky-300 transition-transform hover:bg-sky-500/10 hover:text-sky-200 active:scale-[0.97]"
+                  onClick={() =>
+                    askQuestion(
+                      `Brief me on ${incident.incidentId}: what happened, and what should I do first?`
+                    )
+                  }
+                  aria-label={`Ask the AI copilot about ${incident.incidentId}`}
+                  title="Pre-fill a grounded triage question in the AI Copilot"
+                >
+                  <Bot className="size-3.5" aria-hidden="true" />
+                  Ask Copilot
                 </Button>
                 <Button
                   type="button"

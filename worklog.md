@@ -352,3 +352,34 @@ Stage Summary:
 - DB state: 40 alerts / 8 incidents (INC-1001 analyzed, Contained) / watchlist 4 items (203.0.113.42 added via drawer this round) / 38 unacked; simulation OFF.
 - Risks: none known. extractIocs is heuristic (demo-level); drawer "listed" state trusts the shared watchlist cache (15s staleness acceptable).
 - Next-phase suggestions: graph drag-node repositioning, incident compare/split view, copilot "explain this incident" deep-link buttons in the drawer, e2e smoke script of the 5 core flows.
+---
+Task ID: r10 (webDevReview round 10)
+Agent: Z.ai Code (main)
+Task: Scheduled review — QA sweep (found dev server down → restart; then stable → feature round): Copilot incident deep-link chips, "Ask Copilot" incident brief, drawer entity locate-in-graph, graph dot-grid + button micro-interactions
+
+Work Log:
+- STATUS/QA: worklog reviewed through r9. Health check passed (curl 200, lint+tsc clean) BUT the dev server died between checks — agent-browser got ERR_CONNECTION_REFUSED and curl 000 (no process). Restarted detached per the r4 ops note: `(setsid bun run dev >> dev.log 2>&1 < /dev/null &)` → 200. NOTE for future rounds: this is the second silent death (r2 also found it down); if it recurs, consider a supervisor loop. Post-restart sweep at 1440x900 across all 5 tabs: zero console errors → stable → feature work.
+- FEATURE 1 — COPILOT INCIDENT DEEP-LINK CHIPS:
+  * ai-copilot.tsx: assistant messages split on /\bINC-\d{3,5}\b/ tokens; each mention renders as an emerald mono chip (ArrowUpRight icon) that jumps straight to that incident in Analysis. IncidentChip resolves display id → db id via the shared ["incidents"] react-query cache (staleTime 10s; falls back to a styled non-clickable span if not found — e.g. stale history mentioning a wiped dataset).
+  * Browser-verified: history message "INC-1001 is the highest-risk threat…" now shows the chip; click → Analysis tab with INC-1001 detail open. Mobile 375px: chip wraps inline mid-sentence correctly.
+- FEATURE 2 — "ASK COPILOT" INCIDENT BRIEF (Analysis → Copilot handoff):
+  * DetailPane actions row gains a sky-accent "Ask Copilot" button (Bot icon) next to "Threat Graph": pre-fills and auto-sends "Brief me on <INC-ID>: what happened, and what should I do first?" via the existing askQuestion store plumbing.
+  * Browser-verified: click → Copilot tab → question auto-sent → grounded LLM reply streamed in (visible in conversation).
+- FEATURE 3 — DRAWER ENTITY "LOCATE IN THREAT GRAPH" (extends r9 focus to entities):
+  * soc-store: graphFocusEntity {type, value} | null + focusEntityInGraph() (clears incident focus and vice versa); clearGraphFocus clears both.
+  * threat-graph.tsx: focus resolution now matches incident nodes (inc:<dbId>) OR entity nodes (kind=entity && entityType && label match — robust to id-format changes); focus chip label already renders hoverNode.label so it works for both ("focused: 198.51.100.7 ✕"); info box shows entity card (MALICIOUS IP badge, alert count).
+  * alert-drawer.tsx EntityRow: locate icon-button (LocateFixed) per populated entity row (user/device/ip) — "highlights every incident this entity appears in".
+  * Browser-verified: FILE-001 drawer → locate ip 198.51.100.7 → graph tab, chip + entity info box (2 alerts · unlinked — correct, FILE-001/002 are uncorrelated), other nodes dimmed; clear chip works.
+- STYLING (mandatory):
+  * Threat graph canvas: dot-grid backdrop — SVG pattern (28px, white/5% dots) on a 3×VB rect pinned to world coords so it pans/zooms with the graph (visible depth improvement, verified in screenshot).
+  * Micro-press feedback: active:scale on key CTAs (copilot send active:scale-95, Ask Copilot active:scale-[0.97]).
+  * Copilot chips + entity locate buttons styled to the system (emerald chip, sky hover ring).
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero browser console errors post-restart across all tabs; final curl 200; mobile 375px no overflow (sw==iw).
+- DB state: unchanged this round (40 alerts / 8 incidents / watchlist 4 / INC-1001 analyzed+Contained); simulation OFF.
+
+Stage Summary:
+- New: copilot messages are now navigable (INC-XXXX chips → Analysis), per-incident Copilot brief handoff, per-entity graph locate from the alert drawer, world-pinned dot-grid graph backdrop + button micro-interactions.
+- Cross-view glue now covers: feed→drawer→(analysis | graph | watchlist), analysis→(graph | copilot), copilot→analysis, graph→analysis. The SOC loops are fully interconnected.
+- r9 "next-phase suggestions" progress: copilot deep-links DONE (drawer+analysis both). Still open: graph drag-node repositioning, incident compare/split view, e2e smoke script, feed pagination.
+- Risks: none known. IncidentChip uses the shared incidents cache — one extra GET /api/incidents per copilot mount (cached, ~20ms). Dev-server silent death remains an environmental watch item (restarted; document if it recurs).
+- Next-phase suggestions: graph drag-node repositioning, copilot follow-up suggestion chips per answer, incident compare/split view, e2e smoke script of the 5 core flows.

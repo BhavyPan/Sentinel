@@ -545,6 +545,7 @@ function clampView(v: ViewState): ViewState {
 export function ThreatGraph() {
   const openIncidentRaw = useSocStore((s) => s.openIncident);
   const graphFocusIncidentId = useSocStore((s) => s.graphFocusIncidentId);
+  const graphFocusEntity = useSocStore((s) => s.graphFocusEntity);
   const clearGraphFocus = useSocStore((s) => s.clearGraphFocus);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selectedLinkKey, setSelectedLinkKey] = useState<string | null>(null);
@@ -682,11 +683,19 @@ export function ThreatGraph() {
   }
   if (!data || data.nodes.length === 0) return <EmptyHero />;
 
-  // incident pinned from the Analysis tab ("Threat Graph" cross-link):
-  // behaves like a persistent hover highlight until the analyst clears it
+  // pinned from the Analysis tab ("Threat Graph" cross-link) or the alert
+  // drawer ("locate entity"): behaves like a persistent hover highlight
+  // until the analyst clears it
   const focusNodeId = graphFocusIncidentId
     ? data.nodes.find((n) => n.kind === "incident" && n.id === `inc:${graphFocusIncidentId}`)?.id ?? null
-    : null;
+    : graphFocusEntity
+      ? data.nodes.find(
+          (n) =>
+            n.kind === "entity" &&
+            n.entityType === graphFocusEntity.type &&
+            n.label === graphFocusEntity.value
+        )?.id ?? null
+      : null;
   const activeId = hoverId ?? focusNodeId;
 
   const hoverNode = activeId ? data.nodes.find((n) => n.id === activeId) ?? null : null;
@@ -873,6 +882,20 @@ export function ThreatGraph() {
                   onPointerUp={onPointerUp}
                   onPointerCancel={onPointerUp}
                 >
+                {/* dot-grid backdrop (scales with pan/zoom, pinned to world coords) */}
+                <defs>
+                  <pattern id="soc-graph-dots" width={28} height={28} patternUnits="userSpaceOnUse">
+                    <circle cx={1.2} cy={1.2} r={1.2} fill="oklch(1 0 0 / 5%)" />
+                  </pattern>
+                </defs>
+                <rect
+                  x={-VB_W}
+                  y={-VB_H}
+                  width={VB_W * 3}
+                  height={VB_H * 3}
+                  fill="url(#soc-graph-dots)"
+                  aria-hidden="true"
+                />
                 {/* faint ring guides */}
                 <circle cx={CX} cy={CY} r={R_INCIDENT} fill="none" stroke="oklch(1 0 0 / 4%)" strokeDasharray="2 6" />
                 <circle cx={CX} cy={CY} r={R_ENTITY} fill="none" stroke="oklch(1 0 0 / 3%)" strokeDasharray="2 6" />

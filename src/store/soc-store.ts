@@ -39,6 +39,8 @@ interface SocState {
   selectedIncidentId: string | null;
   /** db id of the incident pinned/highlighted in the Threat Graph (null = none) */
   graphFocusIncidentId: string | null;
+  /** entity (user/device/ip value) pinned/highlighted in the Threat Graph (null = none) */
+  graphFocusEntity: { type: "user" | "device" | "ip"; value: string } | null;
   /** keyboard shortcuts help dialog ("?" / footer hint) */
   shortcutsOpen: boolean;
   setActiveTab: (tab: SocTab) => void;
@@ -49,6 +51,8 @@ interface SocState {
   askQuestion: (question: string) => void;
   /** jump to the Threat Graph with a specific incident pinned/highlighted */
   focusIncidentInGraph: (incidentDbId: string) => void;
+  /** jump to the Threat Graph with a specific entity pinned/highlighted */
+  focusEntityInGraph: (type: "user" | "device" | "ip", value: string) => void;
   clearGraphFocus: () => void;
   setShortcutsOpen: (open: boolean) => void;
 }
@@ -57,6 +61,7 @@ export const useSocStore = create<SocState>((set) => ({
   activeTab: "command",
   selectedIncidentId: null,
   graphFocusIncidentId: null,
+  graphFocusEntity: null,
   shortcutsOpen: false,
   setActiveTab: (tab) => {
     persistTab(tab);
@@ -74,8 +79,13 @@ export const useSocStore = create<SocState>((set) => ({
   },
   focusIncidentInGraph: (incidentDbId) => {
     persistTab("graph");
-    set({ graphFocusIncidentId: incidentDbId, activeTab: "graph" });
+    set({ graphFocusIncidentId: incidentDbId, graphFocusEntity: null, activeTab: "graph" });
   },
-  clearGraphFocus: () => set({ graphFocusIncidentId: null }),
+  focusEntityInGraph: (type, value) => {
+    persistTab("graph");
+    set({ graphFocusEntity: { type, value }, graphFocusIncidentId: null, activeTab: "graph" });
+  },
+  clearGraphFocus: () =>
+    set({ graphFocusIncidentId: null, graphFocusEntity: null }),
   setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
 }));
