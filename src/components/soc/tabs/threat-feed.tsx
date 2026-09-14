@@ -11,6 +11,7 @@ import {
   CheckCheck,
   Download,
   FileUp,
+  ListChecks,
   Paperclip,
   RotateCw,
   Search,
@@ -46,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -67,6 +69,7 @@ import {
   RawSeverityBadge,
   SourceChip,
 } from "@/components/soc/badges";
+import { AlertDrawer } from "@/components/soc/alert-drawer";
 import { ErrorState } from "@/components/soc/error-state";
 import { SeedButton } from "@/components/soc/seed-button";
 import { apiGet, apiSend } from "@/lib/api-client";
@@ -74,6 +77,8 @@ import { DEMO_FEED_LABELS } from "@/lib/seed-data";
 import type {
   AlertDTO,
   AlertUpdateResult,
+  BulkAckPayload,
+  BulkAckResult,
   DashboardSummary,
   ImportPayload,
   ImportResult,
@@ -376,11 +381,17 @@ function AlertRow({
   incidentIdMap,
   ackPending,
   onToggleAck,
+  selected,
+  onToggleSelect,
+  onOpen,
 }: {
   alert: AlertDTO;
   incidentIdMap: Map<string, string>;
   ackPending: boolean;
   onToggleAck: (alert: AlertDTO) => void;
+  selected: boolean;
+  onToggleSelect: (alert: AlertDTO) => void;
+  onOpen: (alert: AlertDTO) => void;
 }) {
   const openIncident = useSocStore((s) => s.openIncident);
   const displayIncidentId = alert.incidentId
@@ -390,11 +401,25 @@ function AlertRow({
 
   return (
     <TableRow
+      onClick={() => onOpen(alert)}
       className={cn(
-        "border-white/5 transition-opacity hover:bg-emerald-500/5",
-        alert.acknowledged && "bg-muted/20 opacity-55 hover:opacity-80"
+        "cursor-pointer border-white/5 transition-opacity hover:bg-emerald-500/5",
+        alert.acknowledged && "bg-muted/20 opacity-55 hover:opacity-80",
+        selected && "bg-emerald-500/10 opacity-100"
       )}
+      aria-selected={selected}
     >
+      <TableCell
+        className="pl-4 pr-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggleSelect(alert)}
+          aria-label={`Select alert ${alert.alertId}`}
+          className="size-4 border-muted-foreground/50 data-[state=checked]:border-emerald-500 data-[state=checked]:bg-emerald-500/80 data-[state=checked]:text-background"
+        />
+      </TableCell>
       <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground" title={formatDateTime(alert.timestamp)}>
         <span className="block text-foreground/80">{timeAgo(alert.timestamp)}</span>
         <span className="block text-[10px] text-muted-foreground/70">{formatDateTime(alert.timestamp)}</span>
@@ -439,14 +464,19 @@ function AlertRow({
         <RawSeverityBadge raw={alert.rawSeverity} />
       </TableCell>
       <TableCell>
-        <CorrelationChip
-          incidentId={displayIncidentId}
-          onClick={
-            alert.incidentId ? () => openIncident(alert.incidentId as string) : undefined
-          }
-        />
+        <span
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex"
+        >
+          <CorrelationChip
+            incidentId={displayIncidentId}
+            onClick={
+              alert.incidentId ? () => openIncident(alert.incidentId as string) : undefined
+            }
+          />
+        </span>
       </TableCell>
-      <TableCell className="pr-3">
+      <TableCell className="pr-3" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
           onClick={() => onToggleAck(alert)}
@@ -503,6 +533,8 @@ export function ThreatFeed() {
   const [presets, setPresets] = useState<FeedPreset[]>(() => loadPresets());
   const [presetDialogOpen, setPresetDialogOpen] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [drawerAlertId, setDrawerAlertId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   // track whether current filters match a saved preset (for the active chip)
@@ -569,6 +601,20 @@ export function ThreatFeed() {
   });
   const pendingAckId = ackMutation.variables?.id;
 
+  // bulk triage: acknowledge / clear a set of alerts in one call
+  const bulkAckMutation = useMutation({
+    mutationFn: (payload: BulkAckPayload) =>
+      apiSend<BulkAckResult>("/api/alerts/bulk-ack", "POST", payload),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries();
+      toast.success(data.message, { description: "Bulk triage applied." });
+      setSelectedIds(new Set());
+    },
+    onError: (err: Error) => {
+      toast.error("Bulk acknowledge failed", { description: err.message });
+    },
+  });
+
   // summary is shared with Command Center (same key) — used for source options
   const summaryQuery = useQuery({
     queryKey: ["dashboard-summary"],
@@ -589,6 +635,51 @@ export function ThreatFeed() {
   }, [incidentsQuery.data]);
 
   const alerts = alertsQuery.data ?? [];
+
+  // ---- selection helpers -------------------------------------------------
+  const toggleSelect = (alert: AlertDTO) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(alert.id)) next.delete(alert.id);
+      else next.add(alert.id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = alerts.length > 0 && alerts.every((a) => selectedIds.has(a.id));
+  const someVisibleSelected = alerts.some((a) => selectedIds.has(a.id));
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        for (const a of alerts) next.delete(a.id);
+        return next;
+      }
+      return new Set([...prev, ...alerts.map((a) => a.id)]);
+    });
+  };
+
+  const selectedAlerts = useMemo(
+    () => alerts.filter((a) => selectedIds.has(a.id)),
+    [alerts, selectedIds]
+  );
+  const bulkAllAcked = selectedAlerts.length > 0 && selectedAlerts.every((a) => a.acknowledged);
+
+  const runBulkAck = () => {
+    if (selectedIds.size === 0) return;
+    bulkAckMutation.mutate({ ids: [...selectedIds], acknowledged: !bulkAllAcked });
+  };
+
+  // ---- alert drawer ------------------------------------------------------
+  const drawerAlert = useMemo(
+    () => (drawerAlertId ? alerts.find((a) => a.id === drawerAlertId) ?? null : null),
+    [alerts, drawerAlertId]
+  );
+  const drawerIncidentLabel = drawerAlert?.incidentId
+    ? incidentIdMap.get(drawerAlert.incidentId) ?? null
+    : null;
+
 
   return (
     <div className="flex flex-col gap-4 sm:gap-6">
@@ -822,6 +913,57 @@ export function ThreatFeed() {
         transition={{ duration: 0.35, delay: 0.08 }}
       >
         <Card className="rounded-xl p-0">
+          {/* bulk triage toolbar (appears when rows are selected) */}
+          {selectedIds.size > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              role="toolbar"
+              aria-label="Bulk triage actions"
+              className="flex flex-wrap items-center gap-2 border-b border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-2.5"
+            >
+              <ListChecks className="size-4 text-emerald-300" aria-hidden="true" />
+              <span className="font-mono text-xs font-semibold text-emerald-300">
+                {selectedIds.size} selected
+              </span>
+              <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                {bulkAllAcked ? "all acknowledged — clear them?" : "mark as reviewed / triaged"}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className={cn(
+                    "min-h-9 gap-1.5 border",
+                    bulkAllAcked
+                      ? "border-slate-500/40 bg-slate-500/10 text-slate-300 hover:bg-slate-500/20"
+                      : "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+                  )}
+                  disabled={bulkAckMutation.isPending}
+                  onClick={runBulkAck}
+                >
+                  {bulkAckMutation.isPending ? (
+                    <RotateCw className="size-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <CheckCheck className="size-3.5" aria-hidden="true" />
+                  )}
+                  {bulkAllAcked ? "Clear acknowledgement" : "Acknowledge selected"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-9 gap-1.5 px-2 text-muted-foreground"
+                  onClick={() => setSelectedIds(new Set())}
+                  disabled={bulkAckMutation.isPending}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                  Clear
+                </Button>
+              </div>
+            </motion.div>
+          )}
           {alertsQuery.isLoading ? (
             <FeedSkeleton />
           ) : alertsQuery.isError ? (
@@ -856,7 +998,21 @@ export function ThreatFeed() {
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4 text-[11px] uppercase tracking-wider">Time</TableHead>
+                    <TableHead className="pl-4 pr-1">
+                      <Checkbox
+                        checked={
+                          allVisibleSelected
+                            ? true
+                            : someVisibleSelected
+                              ? "indeterminate"
+                              : false
+                        }
+                        onCheckedChange={toggleSelectAll}
+                        aria-label="Select all visible alerts"
+                        className="size-4 border-muted-foreground/50 data-[state=checked]:border-emerald-500 data-[state=checked]:bg-emerald-500/80 data-[state=checked]:text-background"
+                      />
+                    </TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wider">Time</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Alert ID</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Source</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Entity</TableHead>
@@ -875,6 +1031,9 @@ export function ThreatFeed() {
                       incidentIdMap={incidentIdMap}
                       ackPending={pendingAckId === a.id}
                       onToggleAck={(alert) => ackMutation.mutate(alert)}
+                      selected={selectedIds.has(a.id)}
+                      onToggleSelect={toggleSelect}
+                      onOpen={(alert) => setDrawerAlertId(alert.id)}
                     />
                   ))}
                 </TableBody>
@@ -934,6 +1093,13 @@ export function ThreatFeed() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Alert detail drawer (row click) */}
+      <AlertDrawer
+        alert={drawerAlert}
+        incidentLabel={drawerIncidentLabel}
+        onClose={() => setDrawerAlertId(null)}
+      />
     </div>
   );
 }

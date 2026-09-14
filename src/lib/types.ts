@@ -151,6 +151,22 @@ export interface IncidentUpdatePayload {
   status?: IncidentStatus;
   classification?: Classification;
   analystNote?: string;
+  /** display name recorded with the note (audit trail); defaults to "Analyst" */
+  analyst?: string;
+}
+
+/** POST /api/alerts/bulk-ack body — bulk triage */
+export interface BulkAckPayload {
+  ids: string[]; // db cuids or alertIds
+  acknowledged: boolean;
+}
+
+/** POST /api/alerts/bulk-ack → response */
+export interface BulkAckResult {
+  updated: number;
+  requested: number;
+  alerts: AlertDTO[];
+  message: string;
 }
 
 /** GET /api/copilot/chat → response */

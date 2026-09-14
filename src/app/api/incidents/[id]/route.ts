@@ -75,9 +75,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (!note) {
         return NextResponse.json({ error: "analystNote cannot be empty" }, { status: 400 });
       }
+      const who = String(body.analyst ?? "").trim() || "Analyst";
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", " ") + "Z";
+      const entry = `[${who} · ${stamp}] ${note}`;
       data.explanation = existing.explanation
-        ? `${existing.explanation}\n\n[Analyst] ${note}`
-        : `[Analyst] ${note}`;
+        ? `${existing.explanation}\n\n${entry}`
+        : entry;
     }
 
     if (Object.keys(data).length === 0) {

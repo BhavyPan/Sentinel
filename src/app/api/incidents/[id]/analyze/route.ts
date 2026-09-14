@@ -55,11 +55,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       llmUsed = true;
       message = "AI analysis complete";
 
-      // Preserve any analyst note appended to the explanation
+      // Preserve any analyst note appended to the explanation.
+      // Matches both the legacy "[Analyst] …" suffix and the newer "[name · stamp] …" audit entries.
       let explanation = llm.explanation || incident.explanation || "";
-      const noteIdx = (incident.explanation || "").indexOf("\n\n[Analyst]");
-      if (noteIdx >= 0) {
-        explanation = `${explanation}${(incident.explanation || "").slice(noteIdx)}`;
+      const noteMatch = /\n\n\[[^\]\n]+\]/.exec(incident.explanation || "");
+      if (noteMatch && noteMatch.index >= 0) {
+        explanation = `${explanation}${(incident.explanation || "").slice(noteMatch.index)}`;
       }
 
       // LLM values win when valid; confidence bump +5, cap 96

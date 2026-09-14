@@ -1,0 +1,940 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { useEffect, useMemo, useRef, useState } from "react";
+     4→     4→import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+     5→     5→import { toast } from "sonner";
+     6→     6→import { motion } from "framer-motion";
+     7→     7→import {
+     8→     8→  Bookmark,
+     9→     9→  BookmarkPlus,
+    10→    10→  Check,
+    11→    11→  CheckCheck,
+    12→    12→  Download,
+    13→    13→  FileUp,
+    14→    14→  Paperclip,
+    15→    15→  RotateCw,
+    16→    16→  Search,
+    17→    17→  Trash2,
+    18→    18→  Upload,
+    19→    19→  X,
+    20→    20→} from "lucide-react";
+    21→    21→import {
+    22→    22→  Card,
+    23→    23→  CardContent,
+    24→    24→  CardDescription,
+    25→    25→  CardHeader,
+    26→    26→  CardTitle,
+    27→    27→} from "@/components/ui/card";
+    28→    28→import { Button } from "@/components/ui/button";
+    29→    29→import {
+    30→    30→  Dialog,
+    31→    31→  DialogContent,
+    32→    32→  DialogDescription,
+    33→    33→  DialogFooter,
+    34→    34→  DialogHeader,
+    35→    35→  DialogTitle,
+    36→    36→} from "@/components/ui/dialog";
+    37→    37→import {
+    38→    38→  DropdownMenu,
+    39→    39→  DropdownMenuContent,
+    40→    40→  DropdownMenuItem,
+    41→    41→  DropdownMenuLabel,
+    42→    42→  DropdownMenuSeparator,
+    43→    43→  DropdownMenuTrigger,
+    44→    44→} from "@/components/ui/dropdown-menu";
+    45→    45→import { Input } from "@/components/ui/input";
+    46→    46→import { Label } from "@/components/ui/label";
+    47→    47→import { Skeleton } from "@/components/ui/skeleton";
+    48→    48→import { Switch } from "@/components/ui/switch";
+    49→    49→import {
+    50→    50→  Select,
+    51→    51→  SelectContent,
+    52→    52→  SelectItem,
+    53→    53→  SelectTrigger,
+    54→    54→  SelectValue,
+    55→    55→} from "@/components/ui/select";
+    56→    56→import {
+    57→    57→  Table,
+    58→    58→  TableBody,
+    59→    59→  TableCell,
+    60→    60→  TableHead,
+    61→    61→  TableHeader,
+    62→    62→  TableRow,
+    63→    63→} from "@/components/ui/table";
+    64→    64→import {
+    65→    65→  CorrelationChip,
+    66→    66→  EventChip,
+    67→    67→  RawSeverityBadge,
+    68→    68→  SourceChip,
+    69→    69→} from "@/components/soc/badges";
+    70→    70→import { ErrorState } from "@/components/soc/error-state";
+    71→    71→import { SeedButton } from "@/components/soc/seed-button";
+    72→    72→import { apiGet, apiSend } from "@/lib/api-client";
+    73→    73→import { DEMO_FEED_LABELS } from "@/lib/seed-data";
+    74→    74→import type {
+    75→    75→  AlertDTO,
+    76→    76→  AlertUpdateResult,
+    77→    77→  DashboardSummary,
+    78→    78→  ImportPayload,
+    79→    79→  ImportResult,
+    80→    80→  IncidentDTO,
+    81→    81→} from "@/lib/types";
+    82→    82→import { formatDateTime, timeAgo, unwrapList } from "@/lib/ui-helpers";
+    83→    83→import { cn } from "@/lib/utils";
+    84→    84→import { useSocStore } from "@/store/soc-store";
+    85→    85→
+    86→    86→type CorrelatedFilter = "all" | "correlated";
+    87→    87→
+    88→    88→interface FeedFilters {
+    89→    89→  search: string;
+    90→    90→  source: string;
+    91→    91→  severity: string;
+    92→    92→  correlated: CorrelatedFilter;
+    93→    93→  hideAck: boolean;
+    94→    94→}
+    95→    95→
+    96→    96→const DEFAULT_FILTERS: FeedFilters = {
+    97→    97→  search: "",
+    98→    98→  source: "all",
+    99→    99→  severity: "all",
+   100→   100→  correlated: "all",
+   101→   101→  hideAck: false,
+   102→   102→};
+   103→   103→
+   104→   104→function buildAlertsUrl(filters: FeedFilters): string {
+   105→   105→  const params = new URLSearchParams();
+   106→   106→  if (filters.search.trim()) params.set("search", filters.search.trim());
+   107→   107→  if (filters.source !== "all") params.set("source", filters.source);
+   108→   108→  if (filters.severity !== "all") params.set("severity", filters.severity);
+   109→   109→  if (filters.correlated === "correlated") params.set("correlated", "true");
+   110→   110→  if (filters.hideAck) params.set("ack", "unack");
+   111→   111→  const qs = params.toString();
+   112→   112→  return qs ? `/api/alerts?${qs}` : "/api/alerts";
+   113→   113→}
+   114→   114→
+   115→   115→// ------------------------------------------------------------------
+   116→   116→// Saved filter presets (localStorage)
+   117→   117→// ----------------------------------------------------------------------
+   118→   118→
+   119→   119→interface FeedPreset {
+   120→   120→  id: string;
+   121→   121→  name: string;
+   122→   122→  filters: FeedFilters;
+   123→   123→}
+   124→   124→
+   125→   125→const PRESETS_KEY = "sentinelai.feedPresets";
+   126→   126→
+   127→   127→function loadPresets(): FeedPreset[] {
+   128→   128→  if (typeof window === "undefined") return []; // SSR guard
+   129→   129→  try {
+   130→   130→    const raw = localStorage.getItem(PRESETS_KEY);
+   131→   131→    if (!raw) return [];
+   132→   132→    const parsed = JSON.parse(raw) as unknown;
+   133→   133→    if (!Array.isArray(parsed)) return [];
+   134→   134→    return parsed.filter(
+   135→   135→      (p): p is FeedPreset =>
+   136→   136→        typeof p === "object" && p !== null &&
+   137→   137→        typeof (p as FeedPreset).id === "string" &&
+   138→   138→        typeof (p as FeedPreset).name === "string" &&
+   139→   139→        typeof (p as FeedPreset).filters === "object"
+   140→   140→    );
+   141→   141→  } catch {
+   142→   142→    return [];
+   143→   143→  }
+   144→   144→}
+   145→   145→
+   146→   146→function savePresets(presets: FeedPreset[]) {
+   147→   147→  try {
+   148→   148→    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+   149→   149→  } catch {
+   150→   150→    // storage full/blocked — presets just won't persist
+   151→   151→  }
+   152→   152→}
+   153→   153→
+   154→   154→function filtersMatch(a: FeedFilters, b: FeedFilters): boolean {
+   155→   155→  return (
+   156→   156→    a.search === b.search &&
+   157→   157→    a.source === b.source &&
+   158→   158→    a.severity === b.severity &&
+   159→   159→    a.correlated === b.correlated &&
+   160→   160→    a.hideAck === b.hideAck
+   161→   161→  );
+   162→   162→}
+   163→   163→
+   164→   164→// ------------------------------------------------------------------
+   165→   165→// Import panel
+   166→   166→// ----------------------------------------------------------------------
+   167→   167→
+   168→   168→const MAX_IMPORT_BYTES = 2 * 1024 * 1024; // 2 MB guard rail
+   169→   169→
+   170→   170→function guessFormatFromName(name: string): NonNullable<ImportPayload["format"]> | null {
+   171→   171→  const ext = name.toLowerCase().split(".").pop() ?? "";
+   172→   172→  if (ext === "json") return "json";
+   173→   173→  if (ext === "csv" || ext === "tsv") return "csv";
+   174→   174→  if (ext === "txt" || ext === "log" || ext === "text") return "text";
+   175→   175→  return null;
+   176→   176→}
+   177→   177→
+   178→   178→function ImportPanel() {
+   179→   179→  const [raw, setRaw] = useState("");
+   180→   180→  const [format, setFormat] = useState<NonNullable<ImportPayload["format"]>>("auto");
+   181→   181→  const [fileName, setFileName] = useState<string | null>(null);
+   182→   182→  const [dragOver, setDragOver] = useState(false);
+   183→   183→  const fileInputRef = useRef<HTMLInputElement>(null);
+   184→   184→  const queryClient = useQueryClient();
+   185→   185→
+   186→   186→  const mutation = useMutation({
+   187→   187→    mutationFn: (payload: ImportPayload) =>
+   188→   188→      apiSend<ImportResult>("/api/alerts/import", "POST", payload),
+   189→   189→    onSuccess: (data) => {
+   190→   190→      queryClient.invalidateQueries();
+   191→   191→      toast.success(`Imported ${data.imported} alerts · ${data.failed} failed`, {
+   192→   192→        description: data.message || undefined,
+   193→   193→      });
+   194→   194→      setRaw("");
+   195→   195→      setFileName(null);
+   196→   196→      if (fileInputRef.current) fileInputRef.current.value = "";
+   197→   197→    },
+   198→   198→    onError: (err: Error) => {
+   199→   199→      toast.error("Import failed", { description: err.message });
+   200→   200→    },
+   201→   201→  });
+   202→   202→
+   203→   203→  const importPayload = (text: string, fmt: NonNullable<ImportPayload["format"]>) =>
+   204→   204→    mutation.mutate({ raw: text, format: fmt });
+   205→   205→
+   206→   206→  const loadFile = async (file: File) => {
+   207→   207→    if (file.size > MAX_IMPORT_BYTES) {
+   208→   208→      toast.error("File too large", { description: `${file.name} exceeds the 2 MB import limit.` });
+   209→   209→      return;
+   210→   210→    }
+   211→   211→    try {
+   212→   212→      const text = await file.text();
+   213→   213→      setRaw(text);
+   214→   214→      setFileName(file.name);
+   215→   215→      const guessed = guessFormatFromName(file.name);
+   216→   216→      if (guessed) setFormat(guessed);
+   217→   217→      toast.success(`Loaded ${file.name}`, {
+   218→   218→        description: `${(file.size / 1024).toFixed(1)} KB${guessed ? ` · format set to ${guessed.toUpperCase()}` : " · auto-detect will be used"}`,
+   219→   219→      });
+   220→   220→    } catch {
+   221→   221→      toast.error("Could not read file", { description: file.name });
+   222→   222→    }
+   223→   223→  };
+   224→   224→
+   225→   225→  const clearFile = () => {
+   226→   226→    setRaw("");
+   227→   227→    setFileName(null);
+   228→   228→    if (fileInputRef.current) fileInputRef.current.value = "";
+   229→   229→  };
+   230→   230→
+   231→   231→  return (
+   232→   232→    <Card className="rounded-xl border-dashed">
+   233→   233→      <CardHeader className="pb-3">
+   234→   234→        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+   235→   235→          <Upload className="size-4 text-emerald-400" aria-hidden="true" />
+   236→   236→          Import Raw Feed
+   237→   237→        </CardTitle>
+   238→   238→        <CardDescription className="text-xs">
+   239→   239→          Upload a file (CSV, JSON or text log), drag &amp; drop it below, or paste a raw feed. The
+   240→   240→          normalizer auto-detects the schema and ingests each record.
+   241→   241→        </CardDescription>
+   242→   242→      </CardHeader>
+   243→   243→      <CardContent className="flex flex-col gap-3">
+   244→   244→        {/* hidden file input + picker row */}
+   245→   245→        <input
+   246→   246→          ref={fileInputRef}
+   247→   247→          type="file"
+   248→   248→          accept=".csv,.tsv,.json,.txt,.log,text/csv,application/json,text/plain"
+   249→   249→          className="sr-only"
+   250→   250→          aria-label="Choose a feed file to import"
+   251→   251→          onChange={(e) => {
+   252→   252→            const f = e.target.files?.[0];
+   253→   253→            if (f) void loadFile(f);
+   254→   254→          }}
+   255→   255→        />
+   256→   256→        <div className="flex flex-wrap items-center gap-2">
+   257→   257→          <Button
+   258→   258→            type="button"
+   259→   259→            variant="outline"
+   260→   260→            size="sm"
+   261→   261→            className="min-h-9 gap-2 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+   262→   262→            onClick={() => fileInputRef.current?.click()}
+   263→   263→            aria-label="Choose feed file"
+   264→   264→          >
+   265→   265→            <FileUp className="size-3.5" aria-hidden="true" />
+   266→   266→            Choose file
+   267→   267→          </Button>
+   268→   268→          {fileName && (
+   269→   269→            <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted/50 px-2.5 py-1.5 font-mono text-[11px] text-foreground/85">
+   270→   270→              <Paperclip className="size-3 shrink-0 text-emerald-400" aria-hidden="true" />
+   271→   271→              <span className="max-w-48 truncate">{fileName}</span>
+   272→   272→              <button
+   273→   273→                type="button"
+   274→   274→                onClick={clearFile}
+   275→   275→                className="ml-0.5 rounded p-0.5 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+   276→   276→                aria-label={`Remove file ${fileName}`}
+   277→   277→              >
+   278→   278→                <X className="size-3" aria-hidden="true" />
+   279→   279→              </button>
+   280→   280→            </span>
+   281→   281→          )}
+   282→   282→          <div className="ml-auto">
+   283→   283→            <Label htmlFor="import-format" className="sr-only">
+   284→   284→              Feed format
+   285→   285→            </Label>
+   286→   286→            <Select
+   287→   287→              value={format}
+   288→   288→              onValueChange={(v) => setFormat(v as NonNullable<ImportPayload["format"]>)}
+   289→   289→            >
+   290→   290→              <SelectTrigger id="import-format" className="w-full sm:w-44" aria-label="Import format">
+   291→   291→                <SelectValue placeholder="Format" />
+   292→   292→              </SelectTrigger>
+   293→   293→              <SelectContent>
+   294→   294→                <SelectItem value="auto">Auto-detect</SelectItem>
+   295→   295→                <SelectItem value="json">JSON</SelectItem>
+   296→   296→                <SelectItem value="csv">CSV</SelectItem>
+   297→   297→                <SelectItem value="text">Plain text</SelectItem>
+   298→   298→              </SelectContent>
+   299→   299→            </Select>
+   300→   300→          </div>
+   301→   301→        </div>
+   302→   302→        <div
+   303→   303→          onDragOver={(e) => {
+   304→   304→            e.preventDefault();
+   305→   305→            setDragOver(true);
+   306→   306→          }}
+   307→   307→          onDragLeave={() => setDragOver(false)}
+   308→   308→          onDrop={(e) => {
+   309→   309→            e.preventDefault();
+   310→   310→            setDragOver(false);
+   311→   311→            const f = e.dataTransfer.files?.[0];
+   312→   312→            if (f) void loadFile(f);
+   313→   313→          }}
+   314→   314→          className={cn(
+   315→   315→            "relative rounded-lg border border-dashed transition-colors",
+   316→   316→            dragOver ? "border-emerald-400 bg-emerald-500/10" : "border-transparent"
+   317→   317→          )}
+   318→   318→        >
+   319→   319→          {dragOver && (
+   320→   320→            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-background/70 font-mono text-xs font-semibold uppercase tracking-widest text-emerald-300">
+   321→   321→              Drop file to load
+   322→   322→            </div>
+   323→   323→          )}
+   324→   324→          <Label htmlFor="import-raw" className="sr-only">
+   325→   325→            Raw feed content
+   326→   326→          </Label>
+   327→   327→          <textarea
+   328→   328→            id="import-raw"
+   329→   329→            value={raw}
+   330→   330→            onChange={(e) => {
+   331→   331→              setRaw(e.target.value);
+   332→   332→              setFileName(null);
+   333→   333→            }}
+   334→   334→            rows={5}
+   335→   335→            placeholder={`{"alert_id":"A9999","source":"siem","timestamp":"...","user":"jdoe",...}\nalert_id,source,timestamp,user,device,ip,event,description,severity\n[SATCOM-7] 2025-01-01T00:00Z SEV:info GROUND-STATION-2 :: ...`}
+   336→   336→            className="soc-scroll w-full resize-y rounded-lg border border-input bg-background/60 px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+   337→   337→            aria-label="Raw feed content to import"
+   338→   338→          />
+   339→   339→        </div>
+   340→   340→        <div className="flex flex-wrap items-center justify-between gap-3">
+   341→   341→          <p className="max-w-md text-[11px] leading-relaxed text-muted-foreground">
+   342→   342→            Supported demo feed types:{" "}
+   343→   343→            {DEMO_FEED_LABELS.map((f) => f.label).join(" · ")}. Correlation re-runs
+   344→   344→            automatically after import.
+   345→   345→          </p>
+   346→   346→          <Button
+   347→   347→            type="button"
+   348→   348→            size="sm"
+   349→   349→            disabled={mutation.isPending || raw.trim().length === 0}
+   350→   350→            onClick={() => importPayload(raw, format)}
+   351→   351→            className="min-h-9 gap-2 border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+   352→   352→            aria-label="Import pasted feed"
+   353→   353→          >
+   354→   354→            {mutation.isPending ? (
+   355→   355→              <RotateCw className="size-3.5 animate-spin" aria-hidden="true" />
+   356→   356→            ) : (
+   357→   357→              <Download className="size-3.5" aria-hidden="true" />
+   358→   358→            )}
+   359→   359→            {mutation.isPending ? "Importing…" : "Import Feed"}
+   360→   360→          </Button>
+   361→   361→        </div>
+   362→   362→      </CardContent>
+   363→   363→    </Card>
+   364→   364→  );
+   365→   365→}
+   366→   366→
+   367→   367→// ------------------------------------------------------------------
+   368→   368→// Feed table
+   369→   369→// ----------------------------------------------------------------------
+   370→   370→
+   371→   371→/** Alerts newer than this get a pulsing "NEW" chip. */
+   372→   372→const FRESH_MS = 120_000;
+   373→   373→
+   374→   374→function AlertRow({
+   375→   375→  alert,
+   376→   376→  incidentIdMap,
+   377→   377→  ackPending,
+   378→   378→  onToggleAck,
+   379→   379→}: {
+   380→   380→  alert: AlertDTO;
+   381→   381→  incidentIdMap: Map<string, string>;
+   382→   382→  ackPending: boolean;
+   383→   383→  onToggleAck: (alert: AlertDTO) => void;
+   384→   384→}) {
+   385→   385→  const openIncident = useSocStore((s) => s.openIncident);
+   386→   386→  const displayIncidentId = alert.incidentId
+   387→   387→    ? incidentIdMap.get(alert.incidentId) ?? "View incident"
+   388→   388→    : null;
+   389→   389→  const fresh = Date.now() - new Date(alert.timestamp).getTime() < FRESH_MS;
+   390→   390→
+   391→   391→  return (
+   392→   392→    <TableRow
+   393→   393→      className={cn(
+   394→   394→        "border-white/5 transition-opacity hover:bg-emerald-500/5",
+   395→   395→        alert.acknowledged && "bg-muted/20 opacity-55 hover:opacity-80"
+   396→   396→      )}
+   397→   397→    >
+   398→   398→      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground" title={formatDateTime(alert.timestamp)}>
+   399→   399→        <span className="block text-foreground/80">{timeAgo(alert.timestamp)}</span>
+   400→   400→        <span className="block text-[10px] text-muted-foreground/70">{formatDateTime(alert.timestamp)}</span>
+   401→   401→      </TableCell>
+   402→   402→      <TableCell className="whitespace-nowrap font-mono text-xs font-semibold text-foreground/85">
+   403→   403→        <span className="flex items-center gap-1.5">
+   404→   404→          {alert.alertId}
+   405→   405→          {fresh && !alert.acknowledged && (
+   406→   406→            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/15 px-1.5 py-px font-mono text-[9px] font-bold tracking-wider text-emerald-300">
+   407→   407→              <span className="relative flex size-1.5">
+   408→   408→                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" aria-hidden="true" />
+   409→   409→                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+   410→   410→              </span>
+   411→   411→              NEW
+   412→   412→            </span>
+   413→   413→          )}
+   414→   414→          {alert.acknowledged && (
+   415→   415→            <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-px font-mono text-[9px] font-bold tracking-wider text-emerald-400/90">
+   416→   416→              ACK
+   417→   417→            </span>
+   418→   418→          )}
+   419→   419→        </span>
+   420→   420→      </TableCell>
+   421→   421→      <TableCell>
+   422→   422→        <SourceChip source={alert.source} sourceLabel={alert.sourceLabel} />
+   423→   423→      </TableCell>
+   424→   424→      <TableCell className="font-mono text-[11px] leading-4 text-muted-foreground">
+   425→   425→        {alert.user && <span className="block truncate" title={`user: ${alert.user}`}>u: {alert.user}</span>}
+   426→   426→        {alert.device && <span className="block truncate" title={`device: ${alert.device}`}>d: {alert.device}</span>}
+   427→   427→        {alert.ip && <span className="block truncate" title={`ip: ${alert.ip}`}>ip: {alert.ip}</span>}
+   428→   428→        {!alert.user && !alert.device && !alert.ip && <span className="text-muted-foreground/50">—</span>}
+   429→   429→      </TableCell>
+   430→   430→      <TableCell>
+   431→   431→        <EventChip event={alert.event} />
+   432→   432→      </TableCell>
+   433→   433→      <TableCell className="max-w-64">
+   434→   434→        <span className="block truncate text-xs text-foreground/85" title={alert.description}>
+   435→   435→          {alert.description}
+   436→   436→        </span>
+   437→   437→      </TableCell>
+   438→   438→      <TableCell>
+   439→   439→        <RawSeverityBadge raw={alert.rawSeverity} />
+   440→   440→      </TableCell>
+   441→   441→      <TableCell>
+   442→   442→        <CorrelationChip
+   443→   443→          incidentId={displayIncidentId}
+   444→   444→          onClick={
+   445→   445→            alert.incidentId ? () => openIncident(alert.incidentId as string) : undefined
+   446→   446→          }
+   447→   447→        />
+   448→   448→      </TableCell>
+   449→   449→      <TableCell className="pr-3">
+   450→   450→        <button
+   451→   451→          type="button"
+   452→   452→          onClick={() => onToggleAck(alert)}
+   453→   453→          disabled={ackPending}
+   454→   454→          aria-pressed={alert.acknowledged}
+   455→   455→          aria-label={
+   456→   456→            alert.acknowledged
+   457→   457→              ? `Clear acknowledgement for alert ${alert.alertId}`
+   458→   458→              : `Acknowledge alert ${alert.alertId}`
+   459→   459→          }
+   460→   460→          title={
+   461→   461→            alert.acknowledged
+   462→   462→              ? `Acknowledged — click to clear`
+   463→   463→              : `Mark ${alert.alertId} as reviewed`
+   464→   464→          }
+   465→   465→          className={cn(
+   466→   466→            "inline-flex size-8 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+   467→   467→            alert.acknowledged
+   468→   468→              ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+   469→   469→              : "border-border bg-transparent text-muted-foreground hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
+   470→   470→          )}
+   471→   471→        >
+   472→   472→          {ackPending ? (
+   473→   473→            <RotateCw className="size-3.5 animate-spin" aria-hidden="true" />
+   474→   474→          ) : alert.acknowledged ? (
+   475→   475→            <CheckCheck className="size-4" aria-hidden="true" />
+   476→   476→          ) : (
+   477→   477→            <Check className="size-4" aria-hidden="true" />
+   478→   478→          )}
+   479→   479→        </button>
+   480→   480→      </TableCell>
+   481→   481→    </TableRow>
+   482→   482→  );
+   483→   483→}
+   484→   484→
+   485→   485→function FeedSkeleton() {
+   486→   486→  return (
+   487→   487→    <div className="flex flex-col gap-2 p-4" aria-busy="true" aria-label="Loading threat feed">
+   488→   488→      {Array.from({ length: 8 }).map((_, i) => (
+   489→   489→        <Skeleton key={i} className="h-11 rounded-lg" />
+   490→   490→      ))}
+   491→   491→    </div>
+   492→   492→  );
+   493→   493→}
+   494→   494→
+   495→   495→// ------------------------------------------------------------------
+   496→   496→// Tab root
+   497→   497→// ----------------------------------------------------------------------
+   498→   498→
+   499→   499→export function ThreatFeed() {
+   500→   500→  const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS);
+   501→   501→  const [searchInput, setSearchInput] = useState("");
+   502→   502→  const [showImport, setShowImport] = useState(false);
+   503→   503→  const [presets, setPresets] = useState<FeedPreset[]>(() => loadPresets());
+   504→   504→  const [presetDialogOpen, setPresetDialogOpen] = useState(false);
+   505→   505→  const [presetName, setPresetName] = useState("");
+   506→   506→  const queryClient = useQueryClient();
+   507→   507→
+   508→   508→  // track whether current filters match a saved preset (for the active chip)
+   509→   509→  const activePreset = useMemo(
+   510→   510→    () => presets.find((p) => filtersMatch(p.filters, filters)) ?? null,
+   511→   511→    [presets, filters]
+   512→   512→  );
+   513→   513→
+   514→   514→  const applyPreset = (preset: FeedPreset) => {
+   515→   515→    setFilters({ ...preset.filters });
+   516→   516→    setSearchInput(preset.filters.search);
+   517→   517→    toast.success(`Preset applied — ${preset.name}`);
+   518→   518→  };
+   519→   519→
+   520→   520→  const savePreset = () => {
+   521→   521→    const name = presetName.trim();
+   522→   522→    if (!name) return;
+   523→   523→    // overwrite an existing preset with the same name
+   524→   524→    const next: FeedPreset[] = [
+   525→   525→      ...presets.filter((p) => p.name.toLowerCase() !== name.toLowerCase()),
+   526→   526→      { id: `p-${Date.now().toString(36)}`, name, filters: { ...filters } },
+   527→   527→    ];
+   528→   528→    setPresets(next);
+   529→   529→    savePresets(next);
+   530→   530→    setPresetDialogOpen(false);
+   531→   531→    setPresetName("");
+   532→   532→    toast.success(`Preset "${name}" saved`, {
+   533→   533→      description: "Stored locally in this browser.",
+   534→   534→    });
+   535→   535→  };
+   536→   536→
+   537→   537→  const deletePreset = (preset: FeedPreset) => {
+   538→   538→    const next = presets.filter((p) => p.id !== preset.id);
+   539→   539→    setPresets(next);
+   540→   540→    savePresets(next);
+   541→   541→    toast.success(`Preset "${preset.name}" deleted`);
+   542→   542→  };
+   543→   543→
+   544→   544→  // debounce search input into the applied filter
+   545→   545→  useEffect(() => {
+   546→   546→    const t = setTimeout(() => setFilters((f) => ({ ...f, search: searchInput })), 300);
+   547→   547→    return () => clearTimeout(t);
+   548→   548→  }, [searchInput]);
+   549→   549→
+   550→   550→  const alertsQuery = useQuery({
+   551→   551→    queryKey: ["alerts", filters],
+   552→   552→    queryFn: () => apiGet<unknown>(buildAlertsUrl(filters)),
+   553→   553→    select: (d: unknown) => unwrapList<AlertDTO>(d, "alerts"),
+   554→   554→  });
+   555→   555→
+   556→   556→  // ack triage toggle
+   557→   557→  const ackMutation = useMutation({
+   558→   558→    mutationFn: (alert: AlertDTO) =>
+   559→   559→      apiSend<AlertUpdateResult>(`/api/alerts/${alert.id}`, "PATCH", {
+   560→   560→        acknowledged: !alert.acknowledged,
+   561→   561→      }),
+   562→   562→    onSuccess: (data) => {
+   563→   563→      queryClient.invalidateQueries();
+   564→   564→      toast.success(data.message);
+   565→   565→    },
+   566→   566→    onError: (err: Error) => {
+   567→   567→      toast.error("Could not update alert", { description: err.message });
+   568→   568→    },
+   569→   569→  });
+   570→   570→  const pendingAckId = ackMutation.variables?.id;
+   571→   571→
+   572→   572→  // summary is shared with Command Center (same key) — used for source options
+   573→   573→  const summaryQuery = useQuery({
+   574→   574→    queryKey: ["dashboard-summary"],
+   575→   575→    queryFn: () => apiGet<DashboardSummary>("/api/dashboard/summary"),
+   576→   576→    refetchInterval: 15_000,
+   577→   577→  });
+   578→   578→
+   579→   579→  const incidentsQuery = useQuery({
+   580→   580→    queryKey: ["incidents"],
+   581→   581→    queryFn: () => apiGet<unknown>("/api/incidents"),
+   582→   582→    select: (d: unknown) => unwrapList<IncidentDTO>(d, "incidents"),
+   583→   583→  });
+   584→   584→
+   585→   585→  const incidentIdMap = useMemo(() => {
+   586→   586→    const m = new Map<string, string>();
+   587→   587→    for (const inc of incidentsQuery.data ?? []) m.set(inc.id, inc.incidentId);
+   588→   588→    return m;
+   589→   589→  }, [incidentsQuery.data]);
+   590→   590→
+   591→   591→  const alerts = alertsQuery.data ?? [];
+   592→   592→
+   593→   593→  return (
+   594→   594→    <div className="flex flex-col gap-4 sm:gap-6">
+   595→   595→      {/* Toolbar */}
+   596→   596→      <motion.div
+   597→   597→        initial={{ opacity: 0, y: 10 }}
+   598→   598→        animate={{ opacity: 1, y: 0 }}
+   599→   599→        transition={{ duration: 0.35 }}
+   600→   600→      >
+   601→   601→        <Card className="rounded-xl p-4">
+   602→   602→          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+   603→   603→            <div className="relative min-w-0 flex-1">
+   604→   604→              <Search
+   605→   605→                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+   606→   606→                aria-hidden="true"
+   607→   607→              />
+   608→   608→              <Input
+   609→   609→                value={searchInput}
+   610→   610→                onChange={(e) => setSearchInput(e.target.value)}
+   611→   611→                placeholder="Search alerts — user, IP, event, description…"
+   612→   612→                className="min-h-11 pl-9"
+   613→   613→                aria-label="Search alerts"
+   614→   614→              />
+   615→   615→            </div>
+   616→   616→
+   617→   617→            <div className="flex flex-wrap items-center gap-2.5">
+   618→   618→              <Label htmlFor="filter-source" className="sr-only">Filter by source</Label>
+   619→   619→              <Select
+   620→   620→                value={filters.source}
+   621→   621→                onValueChange={(v) => setFilters((f) => ({ ...f, source: v }))}
+   622→   622→              >
+   623→   623→                <SelectTrigger id="filter-source" className="min-h-11 w-full sm:w-40" aria-label="Filter by source">
+   624→   624→                  <SelectValue placeholder="Source" />
+   625→   625→                </SelectTrigger>
+   626→   626→                <SelectContent>
+   627→   627→                  <SelectItem value="all">All sources</SelectItem>
+   628→   628→                  {(summaryQuery.data?.alertsBySource ?? []).map((s) => (
+   629→   629→                    <SelectItem key={s.source} value={s.source}>
+   630→   630→                      {s.sourceLabel} ({s.count})
+   631→   631→                    </SelectItem>
+   632→   632→                  ))}
+   633→   633→                </SelectContent>
+   634→   634→              </Select>
+   635→   635→
+   636→   636→              <Label htmlFor="filter-severity" className="sr-only">Filter by severity</Label>
+   637→   637→              <Select
+   638→   638→                value={filters.severity}
+   639→   639→                onValueChange={(v) => setFilters((f) => ({ ...f, severity: v }))}
+   640→   640→              >
+   641→   641→                <SelectTrigger id="filter-severity" className="min-h-11 w-full sm:w-36" aria-label="Filter by severity">
+   642→   642→                  <SelectValue placeholder="Severity" />
+   643→   643→                </SelectTrigger>
+   644→   644→                <SelectContent>
+   645→   645→                  <SelectItem value="all">All severities</SelectItem>
+   646→   646→                  <SelectItem value="critical">Critical</SelectItem>
+   647→   647→                  <SelectItem value="high">High</SelectItem>
+   648→   648→                  <SelectItem value="medium">Medium</SelectItem>
+   649→   649→                  <SelectItem value="low">Low</SelectItem>
+   650→   650→                  <SelectItem value="info">Info</SelectItem>
+   651→   651→                </SelectContent>
+   652→   652→              </Select>
+   653→   653→
+   654→   654→              <div className="flex min-h-11 items-center gap-2 rounded-lg border border-input bg-background/40 px-3">
+   655→   655→                <Switch
+   656→   656→                  id="correlated-only"
+   657→   657→                  checked={filters.correlated === "correlated"}
+   658→   658→                  onCheckedChange={(checked) =>
+   659→   659→                    setFilters((f) => ({
+   660→   660→                      ...f,
+   661→   661→                      correlated: checked ? "correlated" : "all",
+   662→   662→                    }))
+   663→   663→                  }
+   664→   664→                  aria-label="Show correlated alerts only"
+   665→   665→                />
+   666→   666→                <Label htmlFor="correlated-only" className="cursor-pointer text-xs text-muted-foreground">
+   667→   667→                  Correlated only
+   668→   668→                </Label>
+   669→   669→              </div>
+   670→   670→
+   671→   671→              <div className="flex min-h-11 items-center gap-2 rounded-lg border border-input bg-background/40 px-3">
+   672→   672→                <Switch
+   673→   673→                  id="hide-acknowledged"
+   674→   674→                  checked={filters.hideAck}
+   675→   675→                  onCheckedChange={(checked) =>
+   676→   676→                    setFilters((f) => ({ ...f, hideAck: checked }))
+   677→   677→                  }
+   678→   678→                  aria-label="Hide acknowledged alerts"
+   679→   679→                />
+   680→   680→                <Label htmlFor="hide-acknowledged" className="cursor-pointer text-xs text-muted-foreground">
+   681→   681→                  Hide acked
+   682→   682→                </Label>
+   683→   683→              </div>
+   684→   684→
+   685→   685→              {/* saved filter presets */}
+   686→   686→              <DropdownMenu>
+   687→   687→                <DropdownMenuTrigger asChild>
+   688→   688→                  <Button
+   689→   689→                    variant="outline"
+   690→   690→                    size="icon"
+   691→   691→                    className={cn(
+   692→   692→                      "size-11 shrink-0",
+   693→   693→                      activePreset && "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+   694→   694→                    )}
+   695→   695→                    aria-label="Saved filter presets"
+   696→   696→                  >
+   697→   697→                    <Bookmark className="size-4" />
+   698→   698→                  </Button>
+   699→   699→                </DropdownMenuTrigger>
+   700→   700→                <DropdownMenuContent align="end" className="w-64">
+   701→   701→                  <DropdownMenuLabel className="flex items-center justify-between">
+   702→   702→                    Filter presets
+   703→   703→                    {activePreset && (
+   704→   704→                      <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+   705→   705→                        {activePreset.name}
+   706→   706→                      </span>
+   707→   707→                    )}
+   708→   708→                  </DropdownMenuLabel>
+   709→   709→                  <DropdownMenuSeparator />
+   710→   710→                  <DropdownMenuItem
+   711→   711→                    onSelect={(e) => {
+   712→   712→                      e.preventDefault();
+   713→   713→                      setPresetName("");
+   714→   714→                      setPresetDialogOpen(true);
+   715→   715→                    }}
+   716→   716→                    className="gap-2 text-emerald-300 focus:text-emerald-200"
+   717→   717→                  >
+   718→   718→                    <BookmarkPlus className="size-4" aria-hidden="true" />
+   719→   719→                    Save current filters…
+   720→   720→                  </DropdownMenuItem>
+   721→   721→                  {presets.length > 0 && <DropdownMenuSeparator />}
+   722→   722→                  {presets.map((p) => (
+   723→   723→                    <DropdownMenuItem
+   724→   724→                      key={p.id}
+   725→   725→                      onSelect={() => applyPreset(p)}
+   726→   726→                      className="group gap-2"
+   727→   727→                    >
+   728→   728→                      <Bookmark className={cn("size-3.5 shrink-0", activePreset?.id === p.id ? "text-emerald-400" : "text-muted-foreground")} aria-hidden="true" />
+   729→   729→                      <span className="min-w-0 flex-1 truncate">{p.name}</span>
+   730→   730→                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+   731→   731→                        {[p.filters.source !== "all" && "src", p.filters.severity !== "all" && "sev", p.filters.correlated === "correlated" && "corr", p.filters.hideAck && "unacked", p.filters.search && "\"search\""].filter(Boolean).join(" · ") || "all"}
+   732→   732→                      </span>
+   733→   733→                      <button
+   734→   734→                        type="button"
+   735→   735→                        onClick={(e) => {
+   736→   736→                          e.stopPropagation();
+   737→   737→                          deletePreset(p);
+   738→   738→                        }}
+   739→   739→                        aria-label={`Delete preset ${p.name}`}
+   740→   740→                        className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-300 focus-visible:opacity-100 group-hover:opacity-100"
+   741→   741→                      >
+   742→   742→                        <Trash2 className="size-3.5" aria-hidden="true" />
+   743→   743→                      </button>
+   744→   744→                    </DropdownMenuItem>
+   745→   745→                  ))}
+   746→   746→                  {presets.length === 0 && (
+   747→   747→                    <p className="px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+   748→   748→                      No presets yet — configure the filters above, then save them for one-click recall.
+   749→   749→                    </p>
+   750→   750→                  )}
+   751→   751→                </DropdownMenuContent>
+   752→   752→              </DropdownMenu>
+   753→   753→
+   754→   754→              <Button
+   755→   755→                variant="outline"
+   756→   756→                size="icon"
+   757→   757→                className="size-11 shrink-0"
+   758→   758→                onClick={() => alertsQuery.refetch()}
+   759→   759→                disabled={alertsQuery.isFetching}
+   760→   760→                aria-label="Refresh feed"
+   761→   761→              >
+   762→   762→                <RotateCw className={alertsQuery.isFetching ? "size-4 animate-spin" : "size-4"} />
+   763→   763→              </Button>
+   764→   764→
+   765→   765→              <SeedButton size="sm" className="min-h-11" />
+   766→   766→            </div>
+   767→   767→          </div>
+   768→   768→
+   769→   769→          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+   770→   770→            <span aria-live="polite" className="flex flex-wrap items-center gap-2">
+   771→   771→              {alertsQuery.isLoading
+   772→   772→                ? "Loading feed…"
+   773→   773→                : `${alerts.length} alert${alerts.length === 1 ? "" : "s"} in view`}
+   774→   774→              {summaryQuery.data?.lastUpdated
+   775→   775→                ? ` · newest ${timeAgo(summaryQuery.data.lastUpdated)}`
+   776→   776→                : ""}
+   777→   777→              {typeof summaryQuery.data?.counts.unacknowledgedAlerts === "number" &&
+   778→   778→                summaryQuery.data.counts.unacknowledgedAlerts > 0 && (
+   779→   779→                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
+   780→   780→                    <Check className="size-3" aria-hidden="true" />
+   781→   781→                    {summaryQuery.data.counts.unacknowledgedAlerts} awaiting triage
+   782→   782→                  </span>
+   783→   783→                )}
+   784→   784→              {activePreset && (
+   785→   785→                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
+   786→   786→                  <Bookmark className="size-3" aria-hidden="true" />
+   787→   787→                  {activePreset.name}
+   788→   788→                </span>
+   789→   789→              )}
+   790→   790→            </span>
+   791→   791→            <button
+   792→   792→              type="button"
+   793→   793→              onClick={() => setShowImport((v) => !v)}
+   794→   794→              className="inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 font-medium text-emerald-400 transition-colors hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+   795→   795→              aria-expanded={showImport}
+   796→   796→              aria-controls="import-panel"
+   797→   797→            >
+   798→   798→              <Upload className="size-3.5" aria-hidden="true" />
+   799→   799→              {showImport ? "Hide import panel" : "Import raw feed"}
+   800→   800→            </button>
+   801→   801→          </div>
+   802→   802→        </Card>
+   803→   803→      </motion.div>
+   804→   804→
+   805→   805→      {/* Import panel (collapsible) */}
+   806→   806→      {showImport && (
+   807→   807→        <motion.div
+   808→   808→          id="import-panel"
+   809→   809→          initial={{ opacity: 0, height: 0 }}
+   810→   810→          animate={{ opacity: 1, height: "auto" }}
+   811→   811→          transition={{ duration: 0.3 }}
+   812→   812→          className="overflow-hidden"
+   813→   813→        >
+   814→   814→          <ImportPanel />
+   815→   815→        </motion.div>
+   816→   816→      )}
+   817→   817→
+   818→   818→      {/* Feed table */}
+   819→   819→      <motion.div
+   820→   820→        initial={{ opacity: 0, y: 10 }}
+   821→   821→        animate={{ opacity: 1, y: 0 }}
+   822→   822→        transition={{ duration: 0.35, delay: 0.08 }}
+   823→   823→      >
+   824→   824→        <Card className="rounded-xl p-0">
+   825→   825→          {alertsQuery.isLoading ? (
+   826→   826→            <FeedSkeleton />
+   827→   827→          ) : alertsQuery.isError ? (
+   828→   828→            <div className="p-4">
+   829→   829→              <ErrorState
+   830→   830→                message={alertsQuery.error instanceof Error ? alertsQuery.error.message : undefined}
+   831→   831→                onRetry={() => alertsQuery.refetch()}
+   832→   832→              />
+   833→   833→            </div>
+   834→   834→          ) : alerts.length === 0 ? (
+   835→   835→            <div className="flex flex-col items-center gap-2 py-14 text-center">
+   836→   836→              <Search className="size-6 text-muted-foreground/60" aria-hidden="true" />
+   837→   837→              <p className="text-sm font-medium">No alerts match your filters</p>
+   838→   838→              <p className="max-w-sm text-xs text-muted-foreground">
+   839→   839→                Try clearing the search box, widening the severity filter, or load the
+   840→   840→                demo dataset to populate the feed.
+   841→   841→              </p>
+   842→   842→              <Button
+   843→   843→                variant="outline"
+   844→   844→                size="sm"
+   845→   845→                className="mt-1 min-h-9"
+   846→   846→                onClick={() => {
+   847→   847→                  setSearchInput("");
+   848→   848→                  setFilters(DEFAULT_FILTERS);
+   849→   849→                }}
+   850→   850→              >
+   851→   851→                Clear filters
+   852→   852→              </Button>
+   853→   853→            </div>
+   854→   854→          ) : (
+   855→   855→            <div className="soc-scroll max-h-[620px] overflow-auto">
+   856→   856→              <Table>
+   857→   857→                <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
+   858→   858→                  <TableRow className="hover:bg-transparent">
+   859→   859→                    <TableHead className="pl-4 text-[11px] uppercase tracking-wider">Time</TableHead>
+   860→   860→                    <TableHead className="text-[11px] uppercase tracking-wider">Alert ID</TableHead>
+   861→   861→                    <TableHead className="text-[11px] uppercase tracking-wider">Source</TableHead>
+   862→   862→                    <TableHead className="text-[11px] uppercase tracking-wider">Entity</TableHead>
+   863→   863→                    <TableHead className="text-[11px] uppercase tracking-wider">Event</TableHead>
+   864→   864→                    <TableHead className="text-[11px] uppercase tracking-wider">Description</TableHead>
+   865→   865→                    <TableHead className="text-[11px] uppercase tracking-wider">Raw Sev.</TableHead>
+   866→   866→                    <TableHead className="text-[11px] uppercase tracking-wider">Status</TableHead>
+   867→   867→                    <TableHead className="pr-3 text-right text-[11px] uppercase tracking-wider" aria-label="Acknowledge">Ack</TableHead>
+   868→   868→                  </TableRow>
+   869→   869→                </TableHeader>
+   870→   870→                <TableBody>
+   871→   871→                  {alerts.map((a) => (
+   872→   872→                    <AlertRow
+   873→   873→                      key={a.id}
+   874→   874→                      alert={a}
+   875→   875→                      incidentIdMap={incidentIdMap}
+   876→   876→                      ackPending={pendingAckId === a.id}
+   877→   877→                      onToggleAck={(alert) => ackMutation.mutate(alert)}
+   878→   878→                    />
+   879→   879→                  ))}
+   880→   880→                </TableBody>
+   881→   881→              </Table>
+   882→   882→            </div>
+   883→   883→          )}
+   884→   884→        </Card>
+   885→   885→      </motion.div>
+   886→   886→
+   887→   887→      {/* Save-preset dialog */}
+   888→   888→      <Dialog open={presetDialogOpen} onOpenChange={setPresetDialogOpen}>
+   889→   889→        <DialogContent className="sm:max-w-md">
+   890→   890→          <DialogHeader>
+   891→   891→            <DialogTitle className="flex items-center gap-2">
+   892→   892→              <BookmarkPlus className="size-4 text-emerald-400" aria-hidden="true" />
+   893→   893→              Save filter preset
+   894→   894→            </DialogTitle>
+   895→   895→            <DialogDescription>
+   896→   896→              Stores the current search, source, severity, correlation and triage filters in this
+   897→   897→              browser for one-click recall.
+   898→   898→            </DialogDescription>
+   899→   899→          </DialogHeader>
+   900→   900→          <div className="grid gap-2">
+   901→   901→            <Label htmlFor="preset-name">Preset name</Label>
+   902→   902→            <Input
+   903→   903→              id="preset-name"
+   904→   904→              value={presetName}
+   905→   905→              onChange={(e) => setPresetName(e.target.value)}
+   906→   906→              onKeyDown={(e) => {
+   907→   907→                if (e.key === "Enter") {
+   908→   908→                  e.preventDefault();
+   909→   909→                  savePreset();
+   910→   910→                }
+   911→   911→              }}
+   912→   912→              placeholder="e.g. Critical auth alerts"
+   913→   913→              maxLength={40}
+   914→   914→              autoFocus
+   915→   915→            />
+   916→   916→            <p className="font-mono text-[11px] text-muted-foreground">
+   917→   917→              {[filters.source !== "all" && `source: ${filters.source}`, filters.severity !== "all" && `severity: ${filters.severity}`, filters.correlated === "correlated" && "correlated only", filters.hideAck && "hide acknowledged", filters.search.trim() && `search: "${filters.search.trim()}"`]
+   918→   918→                .filter(Boolean)
+   919→   919→                .join(" · ") || "no filters (show everything)"}
+   920→   920→            </p>
+   921→   921→          </div>
+   922→   922→          <DialogFooter>
+   923→   923→            <Button variant="outline" onClick={() => setPresetDialogOpen(false)}>
+   924→   924→              Cancel
+   925→   925→            </Button>
+   926→   926→            <Button
+   927→   927→              onClick={savePreset}
+   928→   928→              disabled={!presetName.trim()}
+   929→   929→              className="gap-2 border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+   930→   930→            >
+   931→   931→              <BookmarkPlus className="size-4" aria-hidden="true" />
+   932→   932→              Save preset
+   933→   933→            </Button>
+   934→   934→          </DialogFooter>
+   935→   935→        </DialogContent>
+   936→   936→      </Dialog>
+   937→   937→    </div>
+   938→   938→  );
+   939→   939→}
+   940→   940→

@@ -20,6 +20,7 @@ import {
   Target,
   ThumbsDown,
   ThumbsUp,
+  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -536,6 +537,54 @@ function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
 // Detail pane
 // ----------------------------------------------------------------------
 
+/**
+ * Renders the explanation with analyst note entries styled as an audit trail:
+ * "[name · stamp] note" paragraphs become bordered blocks, plain text (the AI
+ * explanation) renders as flowing prose.
+ */
+function ExplanationBody({ text }: { text: string }) {
+  const parts = text.split(/\n\n+/);
+  return (
+    <div className="flex flex-col gap-3">
+      {parts.map((part, i) => {
+        const m = /^\[([^\]\n]+)\]\s*([\s\S]*)$/.exec(part);
+        if (m) {
+          return (
+            <div
+              key={i}
+              className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5"
+            >
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-emerald-300/90">
+                {m[1]}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
+                {m[2]}
+              </p>
+            </div>
+          );
+        }
+        return (
+          <p key={i} className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
+            {part}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+/** localStorage key for the analyst's display name (note audit trail) */
+const ANALYST_KEY = "sentinelai.analystName";
+
+function loadAnalystName(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(ANALYST_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function DetailPane({ incidentId }: { incidentId: string }) {
   const queryClient = useQueryClient();
 
@@ -550,6 +599,20 @@ function DetailPane({ incidentId }: { incidentId: string }) {
 
   const [analyzeLine, setAnalyzeLine] = useState(0);
   const [noteText, setNoteText] = useState("");
+  // lazy init from localStorage (SSR-guarded) — same pattern as feed presets
+  const [analystName, setAnalystName] = useState(() => loadAnalystName());
+
+  // persist the analyst identity whenever it changes (SSR-safe)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (analystName.trim()) localStorage.setItem(ANALYST_KEY, analystName.trim());
+      else localStorage.removeItem(ANALYST_KEY);
+    } catch {
+      /* storage blocked — identity just won't persist */
+    }
+  }, [analystName]);
+
   const analyzeMutation = useMutation({
     mutationFn: () => apiSend(`/api/incidents/${incidentId}/analyze`, "POST"),
     onSuccess: (data: unknown) => {
@@ -586,7 +649,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
         : variables.classification
           ? `Classification set to ${variables.classification}`
           : variables.analystNote
-            ? "Analyst note saved"
+            ? `Analyst note saved${variables.analyst ? ` — recorded as ${variables.analyst}` : ""}`
             : "Incident updated";
       toast.success(what, { description: "Analyst feedback recorded." });
       queryClient.invalidateQueries({ queryKey: ["incident", incidentId] });
@@ -741,13 +804,37 @@ function DetailPane({ incidentId }: { incidentId: string }) {
 
             {/* Analyst note */}
             <div className="flex flex-col gap-2 border-t border-border/70 pt-4">
-              <label
-                htmlFor="analyst-note"
-                className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
-              >
-                <NotebookPen className="size-3.5 text-emerald-400" aria-hidden="true" />
-                Analyst Working Notes
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="analyst-note"
+                  className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  <NotebookPen className="size-3.5 text-emerald-400" aria-hidden="true" />
+                  Analyst Working Notes
+                </label>
+                {/* analyst identity (audit trail) */}
+                <div className="flex items-center gap-1.5 rounded-lg border border-input bg-background/40 px-2 py-1">
+                  <UserRound
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      analystName.trim() ? "text-emerald-400" : "text-muted-foreground/50"
+                    )}
+                    aria-hidden="true"
+                  />
+                  <label htmlFor="analyst-identity" className="sr-only">
+                    Your analyst name, recorded with each note
+                  </label>
+                  <input
+                    id="analyst-identity"
+                    value={analystName}
+                    onChange={(e) => setAnalystName(e.target.value.slice(0, 24))}
+                    placeholder="Your name…"
+                    className="w-28 bg-transparent font-mono text-[11px] text-foreground placeholder:text-muted-foreground/50 focus-visible:outline-none"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+              </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <textarea
                   id="analyst-note"
@@ -766,7 +853,12 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                     size="sm"
                     className="min-h-11 gap-1.5 border-emerald-500/40 px-3 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
                     disabled={updateMutation.isPending || noteText.trim().length === 0}
-                    onClick={() => updateMutation.mutate({ analystNote: noteText.trim() })}
+                    onClick={() =>
+                      updateMutation.mutate({
+                        analystNote: noteText.trim(),
+                        analyst: analystName.trim() || undefined,
+                      })
+                    }
                     aria-label="Save analyst note"
                   >
                     {updateMutation.isPending ? (
@@ -791,7 +883,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                 </div>
               </div>
               <p className="font-mono text-[10px] text-muted-foreground/70">
-                {noteText.length}/600 characters · notes are timestamped and appended to the case file
+                {noteText.length}/600 characters · notes are stamped {analystName.trim() ? `as ${analystName.trim()} ` : ""}and appended to the case file
               </p>
             </div>
           </div>
@@ -824,9 +916,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
-                  {incident.explanation}
-                </p>
+                <ExplanationBody text={incident.explanation} />
               </CardContent>
             </Card>
           )}

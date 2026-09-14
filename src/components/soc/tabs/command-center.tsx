@@ -140,14 +140,17 @@ function KpiCard({
 
 function KpiRow({ data }: { data: DashboardSummary }) {
   const c = data.counts;
+  // alert-level counts (by raw severity roll-up) — sub-labels describe the card's own metric
+  const sevCount = (name: string) =>
+    data.alertsBySeverity.find((s) => s.severity === name)?.count ?? 0;
   return (
     <section aria-label="Key metrics" className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
       <KpiCard icon={Inbox} label="Total Alerts" value={data.totalAlerts} sub={`${data.correlatedAlerts} correlated`} tone="emerald" delay={0} />
       <KpiCard icon={Siren} label="Active Incidents" value={data.totalIncidents} sub={`${c.open} open`} tone="red" delay={0.05} />
-      <KpiCard icon={ShieldAlert} label="Critical" value={c.critical} sub={`${c.genuineThreats} genuine threats`} tone="red" delay={0.1} />
-      <KpiCard icon={TriangleAlert} label="High" value={c.high} sub={`${c.analyzed} analyzed`} tone="amber" delay={0.15} />
-      <KpiCard icon={CircleAlert} label="Medium" value={c.medium} sub={`${c.low} low severity`} tone="yellow" delay={0.2} />
-      <KpiCard icon={CircleOff} label="False Positives" value={c.falsePositive} sub={`${data.uncorrelatedAlerts} uncorrelated`} tone="slate" delay={0.25} />
+      <KpiCard icon={ShieldAlert} label="Critical" value={c.critical} sub={`${sevCount("Critical")} critical alert${sevCount("Critical") === 1 ? "" : "s"}`} tone="red" delay={0.1} />
+      <KpiCard icon={TriangleAlert} label="High" value={c.high} sub={`${sevCount("High")} high alert${sevCount("High") === 1 ? "" : "s"}`} tone="amber" delay={0.15} />
+      <KpiCard icon={CircleAlert} label="Medium" value={c.medium} sub={`${sevCount("Medium")} medium alert${sevCount("Medium") === 1 ? "" : "s"}`} tone="yellow" delay={0.2} />
+      <KpiCard icon={CircleOff} label="False Positives" value={c.falsePositive} sub={`${sevCount("False Positive")} FP alert${sevCount("False Positive") === 1 ? "" : "s"}`} tone="slate" delay={0.25} />
     </section>
   );
 }
