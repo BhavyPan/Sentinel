@@ -116,3 +116,31 @@ Work Log:
 
 Stage Summary:
 - SentinelAI D2 MVP is complete, browser-verified, and demo-ready. Next scheduled reviews will iterate on polish and new features (nice-to-haves from spec §15: PDF BLUF export, live alert simulation, entity graph, CSV upload, dark-theme animations).
+---
+Task ID: r2 (webDevReview round 2)
+Agent: Z.ai Code (main)
+Task: Scheduled review — QA sweep, restart dev server, BLUF export (acceptance gap), live threat simulation, styling details
+
+Work Log:
+- STATUS: found dev server down on review start (page 000). Restarted `bun run dev`; DB state intact (30 alerts / 6 incidents / INC-1001 analyzed). QA sweep at 1440x900 + 375x812: zero console errors, all tabs functional.
+- FEATURE 1 — BLUF export/copy (spec acceptance "User can export or copy the BLUF summary", previously missing):
+  * incident-analysis.tsx: added "Copy BLUF" (clipboard + Copied feedback state + toast) and "Report .txt" (Blob download `SentinelAI-report-<ID>.txt`) buttons to the BLUF card header.
+  * buildReportText() generates a full briefing: header block (severity/classification/score/confidence/sources), MITRE mapping, risk signals, BLUF, analyst explanation, recommended actions, evidence, related-alert timeline, disclaimer. Browser-verified: toast "Full report downloaded (INC-1001)".
+- FEATURE 2 — Live threat simulation (spec §15 nice-to-have):
+  * src/lib/simulator.ts: stateless scenario engine — inspects recent alerts, then 55% benign noise (VPN logins, backups, telemetry, user-reported phishing) / 45% escalating stories (svc-account brute-force ramp → successful login → 2.8 GB download; DMZ port-scan ramp; phishing → C2 beacon on 193.142.146.88; rare threat-intel IOC match).
+  * Incremental correlation (NEVER wipes incidents): scores new alert against last-30-min alerts; best partner in an existing incident → attach (refreshes deterministic fields only if incident not analyzed; preserves LLM analysis + analyst feedback); links only ungrouped alerts → create NEW incident; else stays ungrouped.
+  * POST /api/alerts/simulate returns {action: attached|new-incident|ungrouped, alert, note, incident, summary}.
+  * sim-toggle.tsx header switch: 9s ticks, react-query invalidation (summary/alerts/incidents/incident), sonner toasts color-coded by outcome, red pulsing state while on. Guarded against overlapping in-flight ticks.
+  * Browser-verified live: INC-1007 created from simulated + imported scan alerts (3 alerts); INC-1008 grew Low→Medium→High "Suspected large data exfiltration by svc-mkeller" (6 alerts) ranked P2. Untoggle verified.
+- STYLING details (mandatory):
+  * KPI labels no longer truncate at 1440px ("TOTAL ALERTS"/"ACTIVE INCIDENTS"/"FALSE POSITIVES" fully visible) — whitespace-nowrap + 10-11px sizing.
+  * Critical incidents get pulsing red dot + faint red row tint in Command Center table, and pulsing severity dot in the Analysis incident list.
+  * Header: "LAST ALERT <now|Xm ago>" mono ticker (from summary.lastUpdated) + SIM toggle; brand text-base on mobile (fixes truncation), SIM text label hidden <sm.
+  * Keyboard shortcuts: keys 1-4 switch views (input/textarea/select safe, modifier-safe); footer shows [1][2][3][4] switch views kbd hints; browser-verified (pressed 2 → Threat Feed, 3 → Analysis).
+- Checks: bun run lint clean (fixed unused eslint-disable warning); bunx tsc --noEmit clean for src/; dev.log clean; zero browser console errors after full sweep.
+
+Stage Summary:
+- Current state: 38 alerts / 8 incidents (1 Critical, 2 High, 3 Low, 2 FP), INC-1001 analyzed (Investigating, Genuine Threat); simulation left OFF.
+- All spec MUST-have acceptance criteria now incl. BLUF export; 2 of 4 §15 nice-to-haves done (live simulation, report download).
+- Remaining nice-to-haves for next round: CSV file upload (paste works today), entity/attack-chain graph view, PDF report export, animated threat-landing page details.
+- Risks: none known; simulator is demo-only (write path guarded by explicit toggle; no auth model in MVP).

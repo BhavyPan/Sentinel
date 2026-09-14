@@ -6,7 +6,9 @@ import { toast } from "sonner";
 import { motion } from "framer-motion";
 import {
   CheckCircle2,
+  Copy,
   Crosshair,
+  Download,
   FileText,
   Loader2,
   Radar,
@@ -105,7 +107,12 @@ function IncidentList({
                 : "border-border bg-card/60 hover:border-emerald-500/30 hover:bg-card"
             )}
           >
-            <span className={cn("size-2.5 shrink-0 rounded-full", sev.dot)} aria-hidden="true" />
+            <span className="relative flex size-2.5 shrink-0" aria-hidden="true">
+              {inc.severity === "Critical" && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-60" />
+              )}
+              <span className={cn("relative inline-flex size-2.5 rounded-full", sev.dot)} />
+            </span>
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2">
                 <span className="font-mono text-xs font-semibold text-emerald-300/90">{inc.incidentId}</span>
@@ -304,8 +311,100 @@ function MitrePanel({ incident }: { incident: IncidentDetailDTO }) {
 // BLUF report
 // ----------------------------------------------------------------------
 
+/** Build the full plain-text incident report for download/export. */
+function buildReportText(incident: IncidentDetailDTO): string {
+  const rule = "-".repeat(72);
+  const lines: string[] = [];
+  lines.push("=".repeat(72));
+  lines.push(`SENTINELAI INCIDENT REPORT — ${incident.incidentId}`);
+  lines.push("=".repeat(72));
+  lines.push(`Title          : ${incident.title}`);
+  lines.push(`Severity       : ${incident.severity}`);
+  lines.push(`Classification : ${incident.classification}`);
+  lines.push(`Threat Score   : ${incident.threatScore}/100`);
+  lines.push(`Confidence     : ${incident.confidence}%`);
+  lines.push(`Status         : ${incident.status}`);
+  lines.push(`Related Alerts : ${incident.alertCount} (${incident.sources.join(", ")})`);
+  lines.push(`Generated      : ${new Date().toISOString()}`);
+  lines.push("");
+  lines.push(rule);
+  lines.push("MITRE ATT&CK MAPPING");
+  lines.push(rule);
+  if (incident.mitre.length === 0) lines.push("(none mapped)");
+  for (const t of incident.mitre) lines.push(`  ${t.id}  ${t.name} [${t.tactic}]`);
+  lines.push("");
+  lines.push(rule);
+  lines.push("RISK SIGNALS");
+  lines.push(rule);
+  if (incident.riskSignals.length === 0) lines.push("(none)");
+  for (const r of incident.riskSignals) lines.push(`  +${r.points}  ${r.signal}`);
+  lines.push("");
+  lines.push(rule);
+  lines.push("BLUF — BOTTOM LINE UP FRONT");
+  lines.push(rule);
+  lines.push(incident.bluf ?? "");
+  if (incident.explanation) {
+    lines.push("");
+    lines.push(rule);
+    lines.push("ANALYST EXPLANATION");
+    lines.push(rule);
+    lines.push(incident.explanation);
+  }
+  if (incident.recommendedActions.length > 0) {
+    lines.push("");
+    lines.push(rule);
+    lines.push("RECOMMENDED ACTIONS");
+    lines.push(rule);
+    incident.recommendedActions.forEach((a, i) => lines.push(`  ${i + 1}. ${a}`));
+  }
+  if (incident.evidence.length > 0) {
+    lines.push("");
+    lines.push(rule);
+    lines.push("KEY EVIDENCE");
+    lines.push(rule);
+    for (const e of incident.evidence) lines.push(`  - ${e}`);
+  }
+  lines.push("");
+  lines.push(rule);
+  lines.push("RELATED ALERT TIMELINE");
+  lines.push(rule);
+  for (const a of incident.alerts) {
+    lines.push(`  ${a.timestamp}  [${a.sourceLabel}]  ${a.event}  (${a.alertId})`);
+    lines.push(`    ${a.description}`);
+  }
+  lines.push("");
+  lines.push("SentinelAI — simulated demo data, not for operational use.");
+  return lines.join("\n");
+}
+
 function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
+  const [copied, setCopied] = useState(false);
   if (!incident.bluf) return null;
+
+  const copyBluf = async () => {
+    try {
+      await navigator.clipboard.writeText(incident.bluf ?? "");
+      setCopied(true);
+      toast.success("BLUF summary copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Clipboard unavailable in this browser");
+    }
+  };
+
+  const downloadReport = () => {
+    const blob = new Blob([buildReportText(incident)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SentinelAI-report-${incident.incidentId}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`Full report downloaded (${incident.incidentId})`);
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -319,14 +418,38 @@ function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
             BLUF — Bottom Line Up Front
           </span>
           {incident.analyzed ? (
-            <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
               <Sparkles className="size-3" aria-hidden="true" /> AI Analyst Report
             </span>
           ) : (
-            <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
               <ShieldAlert className="size-3" aria-hidden="true" /> Deterministic Baseline
             </span>
           )}
+          <span className="ml-auto flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void copyBluf()}
+              className="min-h-8 gap-1.5 border-emerald-500/40 bg-transparent px-2.5 font-mono text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
+              aria-label="Copy BLUF summary to clipboard"
+            >
+              {copied ? <CheckCircle2 className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+              {copied ? "Copied" : "Copy BLUF"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={downloadReport}
+              className="min-h-8 gap-1.5 border-emerald-500/40 bg-transparent px-2.5 font-mono text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
+              aria-label="Download full incident report as text file"
+            >
+              <Download className="size-3.5" aria-hidden="true" />
+              Report .txt
+            </Button>
+          </span>
         </div>
         <CardContent className="space-y-5 p-4 sm:p-6">
           <p className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground/90">

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { LayoutDashboard, Radio, Crosshair, Bot } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SocHeader } from "@/components/soc/header";
@@ -22,9 +23,27 @@ const TAB_ITEMS: {
   { value: "copilot", label: "AI Copilot", icon: Bot },
 ];
 
+const TAB_ORDER: SocTab[] = ["command", "feed", "analysis", "copilot"];
+
 export default function Page() {
   const activeTab = useSocStore((s) => s.activeTab);
   const setActiveTab = useSocStore((s) => s.setActiveTab);
+
+  // Keyboard shortcuts: 1-4 switch views (ignored while typing in form fields)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
+      }
+      const idx = ["1", "2", "3", "4"].indexOf(e.key);
+      if (idx !== -1) setActiveTab(TAB_ORDER[idx]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setActiveTab]);
 
   return (
     <div className="flex min-h-screen flex-col">

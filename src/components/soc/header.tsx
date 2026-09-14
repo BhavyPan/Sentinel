@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 import { SeedButton } from "@/components/soc/seed-button";
+import { SimToggle } from "@/components/soc/sim-toggle";
+import { apiGet } from "@/lib/api-client";
+import type { DashboardSummary } from "@/lib/types";
 
 /** Live clock — suppressHydrationWarning covers the server/client time skew. */
 function LiveClock() {
@@ -24,7 +28,35 @@ function LiveClock() {
   );
 }
 
-/** Sticky SOC header: brand + tagline, live clock, SYSTEM ONLINE badge, seed action. */
+/** "Last alert Xm ago" ticker — grounded in summary.lastUpdated. */
+function LastAlertTicker() {
+  const lastUpdated = useQuery({
+    queryKey: ["dashboard-summary"],
+    queryFn: () => apiGet<DashboardSummary>("/api/dashboard/summary"),
+    refetchInterval: 15_000,
+    select: (d: DashboardSummary) => d.lastUpdated,
+  }).data;
+
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (!lastUpdated) return null;
+  const mins = Math.max(0, Math.floor((now - new Date(lastUpdated).getTime()) / 60_000));
+  const label = mins < 1 ? "now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago`;
+  return (
+    <span
+      className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground lg:inline"
+      aria-label={`Last alert received ${label}`}
+    >
+      last alert <span className="font-semibold text-emerald-300/90">{label}</span>
+    </span>
+  );
+}
+
+/** Sticky SOC header: brand + tagline, live clock, SYSTEM ONLINE badge, sim + seed actions. */
 export function SocHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-white/8 bg-background/80 backdrop-blur-md">
@@ -35,7 +67,7 @@ export function SocHeader() {
           </div>
           <div className="min-w-0">
             <div className="flex items-baseline gap-2">
-              <h1 className="truncate text-lg font-bold tracking-tight">SentinelAI</h1>
+              <h1 className="truncate text-base font-bold tracking-tight sm:text-lg">SentinelAI</h1>
               <span className="hidden font-mono text-[10px] uppercase tracking-[0.25em] text-emerald-400/80 md:inline">
                 D2 · SOC
               </span>
@@ -47,7 +79,9 @@ export function SocHeader() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+          <LastAlertTicker />
           <LiveClock />
+          <SimToggle />
           <span
             className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300"
             role="status"

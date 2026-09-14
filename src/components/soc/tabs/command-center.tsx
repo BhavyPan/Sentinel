@@ -120,7 +120,7 @@ function KpiCard({
       <Card className={cn("border-l-2 p-4 transition-colors hover:border-emerald-500/30 hover:bg-card/80", t.border)}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
+            <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground sm:text-[11px]">{label}</p>
             <p className={cn("mt-1 font-mono text-3xl font-bold tabular-nums", t.value)}>
               {formatCount(value)}
             </p>
@@ -398,12 +398,23 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                             openIncident(inc.id);
                           }
                         }}
-                        className="min-h-11 cursor-pointer border-white/5 transition-colors hover:bg-emerald-500/5 focus-visible:bg-emerald-500/10 focus-visible:outline-none"
+                        className={cn(
+                          "min-h-11 cursor-pointer border-white/5 transition-colors hover:bg-emerald-500/5 focus-visible:bg-emerald-500/10 focus-visible:outline-none",
+                          inc.severity === "Critical" && "bg-red-500/[0.045] hover:bg-red-500/10"
+                        )}
                         aria-label={`Open incident ${inc.incidentId}: ${inc.title}`}
                       >
                         <TableCell className="pl-4">
-                          <span className={cn("inline-flex size-7 items-center justify-center rounded-md border font-mono text-[11px] font-bold", prio.chip)}>
-                            {prio.label}
+                          <span className="flex items-center gap-1.5">
+                            {inc.severity === "Critical" && (
+                              <span className="relative flex size-1.5 shrink-0" aria-hidden="true">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-70" />
+                                <span className="relative inline-flex size-1.5 rounded-full bg-red-500" />
+                              </span>
+                            )}
+                            <span className={cn("inline-flex size-7 items-center justify-center rounded-md border font-mono text-[11px] font-bold", prio.chip)}>
+                              {prio.label}
+                            </span>
                           </span>
                         </TableCell>
                         <TableCell className="font-mono text-xs font-semibold text-emerald-300/90">

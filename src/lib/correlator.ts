@@ -21,13 +21,13 @@ export interface CorrelateStats {
   alertsUngrouped: number;
 }
 
-interface CorrAlert extends ScorerAlert {
+export interface CorrAlert extends ScorerAlert {
   id: string;
   rawSeverity: string;
   metadata: Record<string, unknown>;
 }
 
-function parseMetadata(raw: string): Record<string, unknown> {
+export function parseMetadata(raw: string): Record<string, unknown> {
   try {
     const v = JSON.parse(raw) as unknown;
     return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
@@ -61,8 +61,8 @@ function maliciousIocValues(a: CorrAlert): Set<string> {
   return out;
 }
 
-/** Pair score per spec §6. Window: |timestamp diff| <= 30 minutes. */
-function pairScore(a: CorrAlert, b: CorrAlert): number {
+/** Pair score per spec §6. Window: |timestamp diff| <= 30 minutes. Exported for the live simulator. */
+export function pairScore(a: CorrAlert, b: CorrAlert): number {
   const diff = Math.abs(+a.timestamp - +b.timestamp);
   if (diff > CORRELATION_WINDOW_MINUTES * 60_000) return 0;
 
@@ -194,7 +194,7 @@ export async function runCorrelation(): Promise<CorrelateStats> {
 }
 
 /** Default recommended actions for a fresh deterministic incident */
-function deterministicActions(classification: string, group: CorrAlert[]): string[] {
+export function deterministicActions(classification: string, group: CorrAlert[]): string[] {
   if (classification === "False Positive") {
     return [
       "Review and close as false positive",
