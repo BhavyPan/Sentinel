@@ -3,13 +3,14 @@
  * Used by the dashboard route, incidents routes, correlate route and copilot route.
  */
 import { db } from "@/lib/db";
-import type { Alert, Incident } from "@prisma/client";
+import type { Alert, Incident, IncidentEvent } from "@prisma/client";
 import type {
   AlertDTO,
   Classification,
   DashboardSummary,
   IncidentDTO,
   IncidentDetailDTO,
+  IncidentEventDTO,
   IncidentStatus,
   MitreTechnique,
   RiskSignal,
@@ -51,6 +52,7 @@ export function toAlertDTO(a: Alert): AlertDTO {
 
 export interface IncidentWithAlerts extends Incident {
   alerts: Alert[];
+  events?: IncidentEvent[];
 }
 
 export function toIncidentDTO(i: IncidentWithAlerts): IncidentDTO {
@@ -78,13 +80,20 @@ export function toIncidentDTO(i: IncidentWithAlerts): IncidentDTO {
   };
 }
 
-/** Detail = list DTO + full related alerts sorted timestamp ascending */
+/** Detail = list DTO + full related alerts sorted timestamp ascending + case activity */
 export function toIncidentDetailDTO(i: IncidentWithAlerts): IncidentDetailDTO {
   return {
     ...toIncidentDTO(i),
     alerts: [...i.alerts]
       .sort((a, b) => +a.timestamp - +b.timestamp)
       .map(toAlertDTO),
+    events: (i.events ?? []).slice(0, 15).map((e) => ({
+      id: e.id,
+      kind: e.kind as IncidentEventDTO["kind"],
+      actor: e.actor,
+      detail: e.detail,
+      createdAt: e.createdAt.toISOString(),
+    })),
   };
 }
 

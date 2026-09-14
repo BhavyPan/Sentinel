@@ -13,7 +13,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params;
     const incident = await db.incident.findFirst({
       where: { OR: [{ id }, { incidentId: id }] },
-      include: { alerts: { orderBy: { timestamp: "asc" } } },
+      include: {
+        alerts: { orderBy: { timestamp: "asc" } },
+        events: { orderBy: { createdAt: "desc" }, take: 15 },
+      },
     });
     if (!incident) {
       return NextResponse.json({ error: `Incident ${id} not found` }, { status: 404 });
@@ -85,11 +88,30 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           analyzed: true,
         },
       });
+
+      // audit: record the analysis run (best effort)
+      try {
+        await db.incidentEvent.create({
+          data: {
+            incidentId: incident.id,
+            kind: "analysis",
+            actor: "SentinelAI",
+            detail: llmUsed
+              ? `AI analysis — score ${llm.threatScore}/100, ${llm.classification}, confidence ${Math.min(96, llm.confidence + 5)}%`
+              : "AI analysis run",
+          },
+        });
+      } catch {
+        // best-effort
+      }
     }
 
     const updated = await db.incident.findFirst({
       where: { id: incident.id },
-      include: { alerts: { orderBy: { timestamp: "asc" } } },
+      include: {
+        alerts: { orderBy: { timestamp: "asc" } },
+        events: { orderBy: { createdAt: "desc" }, take: 15 },
+      },
     });
 
     return NextResponse.json({

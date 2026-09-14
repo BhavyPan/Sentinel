@@ -5,11 +5,11 @@
 import { mitreById, EVENT_MITRE_RULES } from "./mitre-data";
 import {
   BENIGN_KEYWORDS,
-  MALICIOUS_DOMAINS,
-  MALICIOUS_HASHES,
-  MALICIOUS_IPS,
   PRIVILEGED_ACCOUNTS,
   isInternalIp,
+  isMaliciousDomain,
+  isMaliciousHash,
+  isMaliciousIp,
 } from "./threat-intel";
 import type { Classification, MitreTechnique, RiskSignal, Severity } from "./types";
 import { sourceLabelFor } from "./normalizer";
@@ -82,9 +82,9 @@ function mentionedFailureCount(a: ScorerAlert): number {
 function maliciousIocValues(a: ScorerAlert): string[] {
   const meta = parseMeta(a.metadata);
   const out: string[] = [];
-  for (const v of meta.iocs?.ips ?? []) if (MALICIOUS_IPS.includes(v)) out.push(v);
-  for (const v of meta.iocs?.domains ?? []) if (MALICIOUS_DOMAINS.includes(v)) out.push(v);
-  for (const v of meta.iocs?.hashes ?? []) if (MALICIOUS_HASHES.includes(v)) out.push(v);
+  for (const v of meta.iocs?.ips ?? []) if (isMaliciousIp(v)) out.push(v);
+  for (const v of meta.iocs?.domains ?? []) if (isMaliciousDomain(v)) out.push(v);
+  for (const v of meta.iocs?.hashes ?? []) if (isMaliciousHash(v)) out.push(v);
   return [...new Set(out)];
 }
 

@@ -8,10 +8,24 @@ export const dynamic = "force-dynamic";
 const STATUSES: IncidentStatus[] = ["Open", "Investigating", "Contained", "Resolved"];
 const CLASSIFICATIONS: Classification[] = ["Genuine Threat", "False Positive", "Under Review"];
 
+/** Record a case-activity event (best effort — audit must never break the request) */
+async function recordEvent(incidentDbId: string, kind: string, actor: string, detail: string) {
+  try {
+    await db.incidentEvent.create({
+      data: { incidentId: incidentDbId, kind, actor: actor || "Analyst", detail },
+    });
+  } catch {
+    // audit trail is best-effort
+  }
+}
+
 async function findIncident(idOrIncidentId: string) {
   return db.incident.findFirst({
     where: { OR: [{ id: idOrIncidentId }, { incidentId: idOrIncidentId }] },
-    include: { alerts: { orderBy: { timestamp: "asc" } } },
+    include: {
+      alerts: { orderBy: { timestamp: "asc" } },
+      events: { orderBy: { createdAt: "desc" }, take: 15 },
+    },
   });
 }
 
@@ -70,12 +84,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: `Incident ${id} not found` }, { status: 404 });
     }
 
+    const actor = String(body.analyst ?? "").trim() || "Analyst";
+
     if (body.analystNote !== undefined) {
       const note = String(body.analystNote).trim();
       if (!note) {
         return NextResponse.json({ error: "analystNote cannot be empty" }, { status: 400 });
       }
-      const who = String(body.analyst ?? "").trim() || "Analyst";
+      const who = actor;
       const stamp = new Date().toISOString().slice(0, 16).replace("T", " ") + "Z";
       const entry = `[${who} · ${stamp}] ${note}`;
       data.explanation = existing.explanation
@@ -88,6 +104,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     await db.incident.update({ where: { id: existing.id }, data });
+
+    // audit trail entries (best effort)
+    if (data.classification !== undefined && data.classification !== existing.classification) {
+      await recordEvent(existing.id, "classification", actor, `Classification set to ${data.classification}`);
+    }
+    if (data.status !== undefined && data.status !== existing.status) {
+      await recordEvent(existing.id, "status", actor, `Status changed ${existing.status} → ${data.status}`);
+    }
+    if (data.explanation !== undefined) {
+      const noteOnly = String(body.analystNote ?? "").trim();
+      await recordEvent(existing.id, "note", actor, `Note added: "${noteOnly.slice(0, 120)}${noteOnly.length > 120 ? "…" : ""}"`);
+    }
 
     const updated = await findIncident(id);
     return NextResponse.json({ incident: updated ? toIncidentDetailDTO(updated) : null });

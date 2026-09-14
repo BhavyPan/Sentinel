@@ -51,8 +51,31 @@ model Incident {
   analyzed           Boolean   @default(false) // true once LLM analysis ran
   riskSignals        String    @default("[]") // JSON: {signal, points}[] — deterministic scoring breakdown
   alerts             Alert[]
+  events             IncidentEvent[]
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+}
+
+// Case activity audit trail — who did what to an incident, when
+model IncidentEvent {
+  id         String   @id @default(cuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  kind       String   // "status" | "classification" | "note" | "analysis" | "created"
+  actor      String   @default("Analyst") // display name (analyst identity)
+  detail     String   @default("") // human-readable summary of the change
+  createdAt  DateTime @default(now())
+
+  @@index([incidentId, createdAt])
+}
+
+// Analyst-curated IOC watchlist — extends the built-in threat intel lists
+model WatchlistItem {
+  id        String   @id @default(cuid())
+  type      String // "ip" | "domain" | "hash"
+  value     String   @unique
+  note      String   @default("")
+  createdAt DateTime @default(now())
 }
 
 // AI Copilot chat history

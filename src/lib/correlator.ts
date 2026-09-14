@@ -11,10 +11,11 @@ import { scoreIncident, type ScorerAlert } from "./scorer";
 import {
   CORRELATION_THRESHOLD,
   CORRELATION_WINDOW_MINUTES,
-  MALICIOUS_DOMAINS,
-  MALICIOUS_HASHES,
-  MALICIOUS_IPS,
+  isMaliciousDomain,
+  isMaliciousHash,
+  isMaliciousIp,
 } from "./threat-intel";
+import { refreshIntel } from "./watchlist";
 
 export interface CorrelateStats {
   incidentsBefore: number;
@@ -57,9 +58,9 @@ function isLargeTransfer(a: CorrAlert): boolean {
 function maliciousIocValues(a: CorrAlert): Set<string> {
   const out = new Set<string>();
   const iocs = (a.metadata as { iocs?: { ips?: string[]; domains?: string[]; hashes?: string[] } }).iocs;
-  for (const v of iocs?.ips ?? []) if (MALICIOUS_IPS.includes(v)) out.add(`ip:${v}`);
-  for (const v of iocs?.domains ?? []) if (MALICIOUS_DOMAINS.includes(v)) out.add(`dom:${v}`);
-  for (const v of iocs?.hashes ?? []) if (MALICIOUS_HASHES.includes(v)) out.add(`hash:${v}`);
+  for (const v of iocs?.ips ?? []) if (isMaliciousIp(v)) out.add(`ip:${v}`);
+  for (const v of iocs?.domains ?? []) if (isMaliciousDomain(v)) out.add(`dom:${v}`);
+  for (const v of iocs?.hashes ?? []) if (isMaliciousHash(v)) out.add(`hash:${v}`);
   return out;
 }
 
@@ -110,13 +111,18 @@ class UnionFind {
  */
 export async function runCorrelation(): Promise<CorrelateStats> {
   const incidentsBefore = await db.incident.count();
+  await refreshIntel(); // merge analyst watchlist into runtime intel
 
   // --- snapshot analyst/LLM state keyed by each incident's alert-id set ---
-  const [prevIncidents, prevAlertLinks] = await Promise.all([
+  const [prevIncidents, prevAlertLinks, prevEvents] = await Promise.all([
     db.incident.findMany({
       select: {
         id: true,
         analyzed: true,
+        title: true,
+        severity: true,
+        threatScore: true,
+        confidence: true,
         bluf: true,
         explanation: true,
         status: true,
@@ -127,6 +133,7 @@ export async function runCorrelation(): Promise<CorrelateStats> {
       where: { incidentId: { not: null } },
       select: { incidentId: true, id: true },
     }),
+    db.incidentEvent.findMany({ orderBy: { createdAt: "asc" } }),
   ]);
   const prevById = new Map(prevIncidents.map((i) => [i.id, i]));
   const alertIdsByIncident = new Map<string, string[]>();
@@ -136,9 +143,26 @@ export async function runCorrelation(): Promise<CorrelateStats> {
     if (list) list.push(a.id);
     else alertIdsByIncident.set(a.incidentId, [a.id]);
   }
+  const eventsByIncident = new Map<string, typeof prevEvents>();
+  for (const e of prevEvents) {
+    const list = eventsByIncident.get(e.incidentId);
+    if (list) list.push(e);
+    else eventsByIncident.set(e.incidentId, [e]);
+  }
   const carriedBySet = new Map<
     string,
-    { analyzed: boolean; bluf: string | null; explanation: string | null; status: string; classification: string }
+    {
+      analyzed: boolean;
+      title: string;
+      severity: string;
+      threatScore: number;
+      confidence: number;
+      bluf: string | null;
+      explanation: string | null;
+      status: string;
+      classification: string;
+      events: typeof prevEvents;
+    }
   >();
   for (const [incidentDbId, ids] of alertIdsByIncident) {
     const detail = prevById.get(incidentDbId);
@@ -147,10 +171,15 @@ export async function runCorrelation(): Promise<CorrelateStats> {
       [...ids].sort().join("|"),
       {
         analyzed: detail.analyzed,
+        title: detail.title,
+        severity: detail.severity,
+        threatScore: detail.threatScore,
+        confidence: detail.confidence,
         bluf: detail.bluf,
         explanation: detail.explanation,
         status: detail.status,
         classification: detail.classification,
+        events: eventsByIncident.get(incidentDbId) ?? [],
       }
     );
   }
@@ -207,15 +236,18 @@ export async function runCorrelation(): Promise<CorrelateStats> {
     const ids = group.map((a) => a.id);
     const carried = carriedBySet.get([...ids].sort().join("|"));
     if (carried) preserved++;
+    // Analyzed incidents keep the full LLM refinement (title, score, confidence,
+    // severity) — otherwise the deterministic baseline recomputes.
+    const keepLlm = carried?.analyzed === true;
     await db.$transaction(async (tx) => {
       const created = await tx.incident.create({
         data: {
           incidentId,
-          title: result.title,
+          title: keepLlm ? carried!.title : result.title,
           classification: carried?.classification ?? result.classification,
-          severity: result.severity,
-          threatScore: result.threatScore,
-          confidence: result.confidence,
+          severity: keepLlm ? carried!.severity : result.severity,
+          threatScore: keepLlm ? carried!.threatScore : result.threatScore,
+          confidence: keepLlm ? carried!.confidence : result.confidence,
           mitre: JSON.stringify(result.mitre),
           bluf: carried?.bluf ?? result.bluf,
           explanation: carried?.explanation ?? null,
@@ -230,6 +262,18 @@ export async function runCorrelation(): Promise<CorrelateStats> {
         where: { id: { in: ids } },
         data: { incidentId: created.id },
       });
+      if (carried && carried.events.length > 0) {
+        // recreate the audit trail on the rebuilt row (original timestamps kept)
+        await tx.incidentEvent.createMany({
+          data: carried.events.map((e) => ({
+            incidentId: created.id,
+            kind: e.kind,
+            actor: e.actor,
+            detail: e.detail,
+            createdAt: e.createdAt,
+          })),
+        });
+      }
     });
     grouped += group.length;
     seq++;

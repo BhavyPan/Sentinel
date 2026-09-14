@@ -221,3 +221,62 @@ Work Log (reconstructed by r6 from code inspection + browser verification):
 
 Stage Summary:
 - r5 features all functional and now officially logged. Data state restored to 40 alerts / 8 incidents / 38 unacked / INC-1001 analyzed.
+---
+Task ID: r6 (webDevReview round 6)
+Agent: Z.ai Code (main)
+Task: Scheduled review — QA sweep, then: ⌘K Command Palette, graph edge-click metadata, correlator state-preservation fix, Copilot context strip
+
+Work Log:
+- STATUS: QA sweep at 1440x900 + 375x812 across all 5 tabs — zero console errors, all flows functional. Phase stable → feature work.
+- QA FIX: removed the no-op "Dismiss feedback" X button from the Analysis action row (dead UI, did nothing) + dropped unused X import.
+- FEATURE 1 — ⌘K COMMAND PALETTE (src/components/soc/command-palette.tsx, wired in page.tsx + header.tsx):
+  * Global ⌘K / Ctrl+K shortcut (zustand store shared by header trigger button + keydown listener); groups: Go to view (tabs 1-5 shortcuts), Open investigation (all incidents live-fetched only while open, sorted by threat score, severity dots), Ask the copilot (4 canned questions via askQuestion), Actions (Load Demo Dataset, Run Correlation Pipeline, Open Copilot free-form).
+  * Header gains "Quick jump… ⌘K" pill button; footer hints now show [1-5] switch views · ⌘K quick jump.
+  * Browser-verified: ⌘K opens; INC-1008 click jumps to Analysis with incident selected; correlation action fired end-to-end (toast "30 alerts grouped → 8 incidents").
+- FEATURE 2 — GRAPH EDGE-CLICK METADATA (threat-graph.tsx):
+  * Invisible 14px hit-path over every edge (25 rendered); click selects the relationship (didPan-guarded), Esc / X / re-click clears.
+  * Selected edge: thicker+full opacity, others dim to 0.08; header info box swaps to LinkInfoBox (entity → incident, severity chip, alert count); evidence strip under canvas shows backing alert ids (sampleAlertIds chips + "+N more") and an "Open investigation" deep-link button — verified jump to INC-1001.
+  * Escape-clear useEffect placed BEFORE early returns (hooks-order correctness); hint text updated.
+- BUGFIX (MAJOR) — CORRELATOR STATE PRESERVATION (src/lib/correlator.ts):
+  * runCorrelation previously deleteMany'd ALL incidents — re-correlation wiped LLM analysis, BLUF, analyst notes, status and classification (exposed by the new palette action).
+  * Now snapshots per-incident analyst state keyed by sorted alert-id set before rebuild; groups with identical alert membership carry over analyzed/bluf/explanation/status/classification; changed groups recompute fresh.
+  * Verified: INC-1001 set to Investigating → re-correlate → status+classification preserved ("created 0 seconds ago" but state intact); dev.log line "[correlator] preserved analyst state for 8 unchanged incident group(s)". INC-1001 then re-analyzed via LLM to restore demo state (95, Investigating, Genuine Threat).
+- FEATURE 3 — COPILOT CONTEXT STRIP (ai-copilot.tsx): live chips under the header (N open / total incidents, genuine threats, awaiting triage, ai-analysed, data as of …) — grounds the chat visually; fixed "1 hour ago ago" duplication (timeAgo already includes "ago").
+- CONFIRMED (was unlogged r5 in-flight work, now verified): downloadBriefingPackPdf exists in report-pdf.ts + "Briefing .pdf" button on Command Center — browser download test produced valid 12KB PDF (cover exec summary + severity distribution bar + prioritised register + per-incident detail cards). The worklog "remaining ideas" item "PDF for ALL incidents" is therefore DONE.
+- Styling: deduped search icon in palette strip; palette footer hints (↑↓ navigate · ↵ select · ⌘K palette).
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero console errors after fresh reload + 1-5 sweep; mobile 375px verified (Copilot strip wraps, header fits).
+
+Stage Summary:
+- New: ⌘K command palette, edge-click relationship evidence, analyst-state-preserving re-correlation, Copilot context strip.
+- DB: 40 alerts / 8 incidents / 38 unacked / INC-1001 analyzed+Investigating+Genuine Threat; simulation OFF.
+- Remaining ideas: custom IOC watchlist UI (static intel lists today), incident case-activity/audit log, drag node repositioning, feed pagination for large datasets.
+- Risks: none known. Correlator preservation is exact-match only (group membership changes → fresh rebuild, documented).
+---
+Task ID: r7 (webDevReview round 7)
+Agent: Z.ai Code (main)
+Task: Scheduled review — log r6 (was unlogged), QA sweep, then new features: IOC Watchlist + Case Activity audit trail + correlator preservation v2
+
+Work Log:
+- HOUSEKEEPING: r6 session had ended before logging — appended the full r6 entry to worklog.md first (palette, edge-click, correlator preservation v1, Copilot context strip).
+- STATUS/QA: server healthy (200) after schema push + dev-server restart (per r4 ops note: db:push → restart; wiped .next). Browser sweep 1440x900 + 375x812, zero console errors → stable → feature work.
+- FEATURE 1 — IOC WATCHLIST (analyst-curated threat intel, DB-backed):
+  * Schema: WatchlistItem { id, type ip|domain|hash, value unique, note, createdAt } (db:push done).
+  * Runtime intel merge: threat-intel.ts gains extraIps/Domains/Hashes sets + isMaliciousIp/Domain/Hash + getMaliciousIps(); new src/lib/watchlist.ts refreshIntel() loads DB watchlist into those sets with a 5s cache (never throws — stale sets on failure).
+  * Wired into ALL IOC consumers: correlator (pairScore +5 signal), scorer (known-malicious-IOC +25 signal), normalizer (iocMatch metadata on ingest), /api/graph (red node + dashed ring), simulator (picks analyst IPs for C2 alerts). refreshIntel() called at top of runCorrelation / graph GET / simulateOneAlert.
+  * API: GET/POST /api/watchlist (validation: IPv4 regex, domain regex + lowercase, hex hash 8-64; 409 on duplicate; value ≤200 chars) + DELETE /api/watchlist/[id] (by cuid or value).
+  * UI: WatchlistCard on Command Center (between charts and Priority Incidents) — type Select + mono input + Add button, entry rows (type icon, value, type chip, timeAgo, hover-reveal delete), count chip, dashed empty state, skeleton. Browser-verified: added 203.0.113.66 → toast → re-correlate via palette → INC-1007 score 15→40 (+25 known-malicious IOC) and graph node now red with dashed spinning ring.
+- FEATURE 2 — CASE ACTIVITY AUDIT TRAIL (IncidentEvent):
+  * Schema: IncidentEvent { incidentId FK cascade, kind status|classification|note|analysis|created, actor, detail, createdAt } + @@index([incidentId, createdAt]).
+  * Recording: PATCH /api/incidents/[id] logs classification/status changes (with from → to) and notes (truncated 120 chars, actor from body.analyst); /analyze logs "AI analysis — score X/100, classification, confidence Y%" as actor SentinelAI (best-effort, never breaks the request).
+  * Contract: IncidentEventDTO + IncidentDetailDTO.events (newest first, 15 cap); detail GET/PATCH/analyze now include events in the incident query.
+  * UI: CaseActivity card in Analysis (between timeline grid and BLUF report) — vertical timeline with connector lines, per-kind icon/color (status sky, classification emerald, note amber, analysis emerald, created red), kind chip, actor + timeAgo. Hidden when empty.
+- BUGFIX (correlator preservation v2): v1 preserved bluf/explanation/status/classification/analyzed but recomputed title/severity/threatScore/confidence → LLM-refined titles were lost on re-correlation. Snapshot now also carries title/severity/threatScore/confidence/events; analyzed incidents keep the FULL LLM refinement, unanalyzed ones recompute deterministically. Audit events are snapshotted and re-created on the rebuilt row (original createdAt kept) instead of being cascade-deleted.
+  * Verified: re-analyzed INC-1001 (LLM title "Admin Account Compromise with Data Exfiltration", 95) → re-correlate → title/score/analysis preserved AND Case Activity still shows both events; dev.log "[correlator] preserved analyst state for 8 unchanged incident group(s)".
+- STYLING: watchlist delete button visible on touch devices (opacity-100 below sm, hover-reveal on sm+); watchlist form stacks vertically on mobile.
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero browser console errors after fresh reload + 1-5 tab sweep; watchlist API returns items; dev.log shows only transient mid-edit Fast Refresh 500s, current requests all 200.
+
+Stage Summary:
+- New capabilities: analyst IOC watchlist (scoring + correlation + graph + simulator integration), per-incident case-activity audit trail, full LLM-refinement preservation across re-correlation.
+- DB state: 40 alerts / 8 incidents; INC-1001 analyzed (95, "Admin Account Compromise with Data Exfiltration"), status Contained, 2 audit events; watchlist: 203.0.113.66; simulation OFF.
+- Remaining ideas: watchlist bulk paste (CSV of IOCs), watchlist hit counters (how many alerts matched each IOC), severity/status filters on Command Center table, drag node repositioning, feed pagination.
+- Risks: none known. Watchlist validation is client-trusted demo level (IPv4 only, no IPv6/CIDR); events capped at 15 in DTO.

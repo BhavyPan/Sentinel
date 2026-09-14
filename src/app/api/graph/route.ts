@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { MALICIOUS_IPS, isInternalIp } from "@/lib/threat-intel";
+import { isInternalIp, isMaliciousIp } from "@/lib/threat-intel";
+import { refreshIntel } from "@/lib/watchlist";
 import type {
   Classification,
   GraphData,
@@ -40,6 +41,7 @@ type EntityAcc = {
  * Links: entity → incident when the entity appears in ≥1 alert of that incident.
  */
 export async function GET() {
+  await refreshIntel(); // merge analyst watchlist for malicious-IP flagging
   const [incidents, allAlerts] = await Promise.all([
     db.incident.findMany({ include: { alerts: true } }),
     db.alert.findMany(),
@@ -146,7 +148,7 @@ export async function GET() {
       weight: incidentDbIds.length,
       alertCount: acc.alertCount,
       incidentDbIds,
-      ...(isIp ? { internal: isInternalIp(acc.value), malicious: MALICIOUS_IPS.includes(acc.value) } : {}),
+      ...(isIp ? { internal: isInternalIp(acc.value), malicious: isMaliciousIp(acc.value) } : {}),
     });
   }
 

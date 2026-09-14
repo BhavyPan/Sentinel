@@ -3,7 +3,7 @@
  * Converts raw multi-format feeds (SIEM/EDR JSON, CSV, satellite text, intel report)
  * into one common NormalizedAlertInput structure, extracting IOCs on the way.
  */
-import { MALICIOUS_DOMAINS, MALICIOUS_HASHES, MALICIOUS_IPS } from "./threat-intel";
+import { isMaliciousDomain, isMaliciousHash, isMaliciousIp } from "./threat-intel";
 
 export type ParsedFormat = "json" | "csv" | "text";
 export type RequestedFormat = "auto" | "json" | "csv" | "text";
@@ -107,9 +107,9 @@ function buildMetadata(
   if (iocs.ips.length || iocs.domains.length || iocs.hashes.length) {
     metadata.iocs = iocs;
     const matches = [
-      ...iocs.ips.filter((v) => MALICIOUS_IPS.includes(v)),
-      ...iocs.domains.filter((v) => MALICIOUS_DOMAINS.includes(v)),
-      ...iocs.hashes.filter((v) => MALICIOUS_HASHES.includes(v)),
+      ...iocs.ips.filter((v) => isMaliciousIp(v)),
+      ...iocs.domains.filter((v) => isMaliciousDomain(v)),
+      ...iocs.hashes.filter((v) => isMaliciousHash(v)),
     ];
     if (matches.length) {
       metadata.iocMatch = true;

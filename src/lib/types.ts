@@ -62,9 +62,40 @@ export interface IncidentDTO {
   updatedAt: string;
 }
 
+/** Case-activity audit entry (who did what, when) */
+export interface IncidentEventDTO {
+  id: string;
+  kind: "status" | "classification" | "note" | "analysis" | "created";
+  actor: string;
+  detail: string;
+  createdAt: string;
+}
+
 /** Incident detail = list view + full related alerts */
 export interface IncidentDetailDTO extends IncidentDTO {
   alerts: AlertDTO[]; // sorted by timestamp ascending (attack timeline)
+  /** case activity, newest first (capped) */
+  events: IncidentEventDTO[];
+}
+
+/** GET /api/watchlist → response */
+export interface WatchlistItemDTO {
+  id: string;
+  type: "ip" | "domain" | "hash";
+  value: string;
+  note: string;
+  createdAt: string;
+}
+
+export interface WatchlistListResult {
+  items: WatchlistItemDTO[];
+}
+
+/** POST /api/watchlist + DELETE /api/watchlist/[id] → response */
+export interface WatchlistResult {
+  item?: WatchlistItemDTO;
+  removed?: string;
+  message: string;
 }
 
 /** GET /api/dashboard/summary */

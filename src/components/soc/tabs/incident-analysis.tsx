@@ -5,17 +5,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import {
+  ArrowRightLeft,
   CheckCircle2,
   Copy,
   Crosshair,
   Download,
   FileDown,
   FileText,
+  History,
   Loader2,
   NotebookPen,
   Radar,
   ShieldAlert,
   ShieldCheck,
+  Siren,
   Sparkles,
   Target,
   ThumbsDown,
@@ -912,8 +915,88 @@ function DetailPane({ incidentId }: { incidentId: string }) {
         </div>
       </div>
 
+      <CaseActivity events={incident.events ?? []} />
+
       <BlufReport incident={incident} />
     </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Case activity (audit trail)
+// ------------------------------------------------------------------
+
+const EVENT_META: Record<
+  string,
+  { icon: typeof ShieldCheck; color: string; label: string }
+> = {
+  status: { icon: ArrowRightLeft, color: "text-sky-400", label: "status" },
+  classification: { icon: ShieldCheck, color: "text-emerald-400", label: "classification" },
+  note: { icon: NotebookPen, color: "text-amber-400", label: "note" },
+  analysis: { icon: Sparkles, color: "text-emerald-400", label: "ai analysis" },
+  created: { icon: Siren, color: "text-red-400", label: "created" },
+};
+
+function CaseActivity({ events }: { events: IncidentDetailDTO["events"] }) {
+  if (events.length === 0) return null;
+  return (
+    <Card className="rounded-xl">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <History className="size-4 text-emerald-400" aria-hidden="true" />
+          Case Activity
+          <span className="rounded-full border border-border bg-muted/50 px-2 py-px font-mono text-[10px] text-muted-foreground">
+            {events.length}
+          </span>
+        </CardTitle>
+        <CardDescription className="text-xs">
+          Audit trail of status, classification, notes and AI analysis runs
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ol className="flex flex-col gap-0" aria-label="Case activity entries">
+          {events.map((e, idx) => {
+            const meta = EVENT_META[e.kind] ?? {
+              icon: History,
+              color: "text-muted-foreground",
+              label: e.kind,
+            };
+            const Icon = meta.icon;
+            return (
+              <li key={e.id} className="relative flex gap-3 pb-4 last:pb-0">
+                {/* connector line */}
+                {idx < events.length - 1 && (
+                  <span
+                    className="absolute left-[13px] top-8 h-[calc(100%-2rem)] w-px bg-border/70"
+                    aria-hidden="true"
+                  />
+                )}
+                <span
+                  className={cn(
+                    "z-10 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-card",
+                    meta.color
+                  )}
+                  aria-hidden="true"
+                >
+                  <Icon className="size-3.5" />
+                </span>
+                <div className="min-w-0 flex-1 pt-0.5">
+                  <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs leading-snug">
+                    <span className="font-semibold text-foreground/90">{e.detail}</span>
+                    <span className="rounded border border-border bg-muted/50 px-1 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                      {meta.label}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                    {e.actor} · {timeAgo(e.createdAt)}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </CardContent>
+    </Card>
   );
 }
 

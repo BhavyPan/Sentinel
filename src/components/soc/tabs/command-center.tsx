@@ -53,6 +53,7 @@ import {
 import { ThreatScoreBar } from "@/components/soc/threat-score";
 import { EmptyHero } from "@/components/soc/empty-hero";
 import { ErrorState } from "@/components/soc/error-state";
+import { WatchlistCard } from "@/components/soc/watchlist-card";
 import { apiGet } from "@/lib/api-client";
 import type { DashboardSummary, IncidentDTO } from "@/lib/types";
 import {
@@ -678,6 +679,7 @@ export function CommandCenter() {
       <div className="flex min-w-0 flex-1 flex-col gap-4 sm:gap-6">
         <KpiRow data={query.data} />
         <ChartsRow data={query.data} />
+        <WatchlistCard />
         <IncidentTable incidents={query.data.topIncidents} />
       </div>
       <CopilotMiniPanel />

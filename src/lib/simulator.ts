@@ -11,8 +11,9 @@ import { db } from "@/lib/db";
 import {
   CORRELATION_THRESHOLD,
   CORRELATION_WINDOW_MINUTES,
-  MALICIOUS_IPS,
+  getMaliciousIps,
 } from "./threat-intel";
+import { refreshIntel } from "./watchlist";
 import {
   deterministicActions,
   pairScore,
@@ -240,7 +241,7 @@ async function generateRaw(): Promise<{ raw: RawAlert; note: string }> {
     };
   }
   // rare: standalone high-signal C2 match on a known-malicious IP
-  const ip = pick(MALICIOUS_IPS);
+  const ip = pick(getMaliciousIps());
   return {
     raw: {
       alert_id: `SIM-${Date.now().toString(36).toUpperCase()}`,
@@ -289,6 +290,7 @@ export interface SimulateResult {
  * - Else leave ungrouped.
  */
 export async function simulateOneAlert(): Promise<SimulateResult> {
+  await refreshIntel(); // pick up analyst watchlist entries
   const { raw, note } = await generateRaw();
 
   // Normalize via the real pipeline (single canonical JSON object).
