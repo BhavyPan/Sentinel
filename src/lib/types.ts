@@ -212,6 +212,10 @@ export interface GraphLink {
   target: string; // node id
   severity: Severity; // edge color source (incident severity)
   incidentDbId: string; // for click-through
+  /** how many of the entity's alerts live inside the target incident */
+  alertCount: number;
+  /** up to 3 example alert ids backing this relationship (evidence) */
+  sampleAlertIds: string[];
 }
 
 export interface GraphData {

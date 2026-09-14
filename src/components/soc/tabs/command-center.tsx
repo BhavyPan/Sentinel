@@ -20,6 +20,7 @@ import {
   Bot,
   CircleAlert,
   FileDown,
+  FileText,
   Inbox,
   Send,
   ShieldAlert,
@@ -354,14 +355,43 @@ function ChartsRow({ data }: { data: DashboardSummary }) {
 function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
   const openIncident = useSocStore((s) => s.openIncident);
   const [exporting, setExporting] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const fetchAllIncidents = async (): Promise<IncidentDTO[]> => {
+    const all = await apiGet<unknown>("/api/incidents");
+    return Array.isArray(all)
+      ? (all as IncidentDTO[])
+      : ((all as { incidents?: IncidentDTO[] }).incidents ?? []);
+  };
+
+  const exportBriefing = async () => {
+    setExportingPdf(true);
+    try {
+      const list = await fetchAllIncidents();
+      if (list.length === 0) {
+        toast.info("Nothing to brief — no incidents yet.");
+        return;
+      }
+      const summary = await apiGet<DashboardSummary>("/api/dashboard/summary");
+      const { downloadBriefingPackPdf } = await import("@/lib/report-pdf");
+      await downloadBriefingPackPdf(list, {
+        totalAlerts: summary.totalAlerts,
+        unacknowledgedAlerts: summary.counts.unacknowledgedAlerts,
+      });
+      toast.success(`Briefing pack exported — ${list.length} incidents`);
+    } catch (err) {
+      toast.error("Briefing export failed", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const all = await apiGet<unknown>("/api/incidents");
-      const list = Array.isArray(all)
-        ? (all as IncidentDTO[])
-        : ((all as { incidents?: IncidentDTO[] }).incidents ?? []);
+      const list = await fetchAllIncidents();
       if (list.length === 0) {
         toast.info("Nothing to export — no incidents yet.");
         return;
@@ -415,18 +445,32 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                 Ranked by threat score — click a row to open the investigation view
               </CardDescription>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-h-9 shrink-0 gap-1.5 border-border text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
-              onClick={() => void exportCsv()}
-              disabled={exporting}
-              aria-label="Export all incidents as CSV"
-            >
-              <FileDown className={exporting ? "size-3.5 animate-pulse" : "size-3.5"} aria-hidden="true" />
-              Export CSV
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-9 gap-1.5 border-border text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+                onClick={() => void exportBriefing()}
+                disabled={exportingPdf}
+                aria-label="Export situation briefing pack as PDF"
+              >
+                <FileText className={exportingPdf ? "size-3.5 animate-pulse" : "size-3.5"} aria-hidden="true" />
+                Briefing .pdf
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-9 gap-1.5 border-border text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+                onClick={() => void exportCsv()}
+                disabled={exporting}
+                aria-label="Export all incidents as CSV"
+              >
+                <FileDown className={exporting ? "size-3.5 animate-pulse" : "size-3.5"} aria-hidden="true" />
+                Export CSV
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">

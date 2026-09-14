@@ -100,7 +100,7 @@ export async function GET() {
       classification: inc.classification as Classification,
     });
 
-    const seenEntities = new Set<string>();
+    const entLinkStats = new Map<string, { count: number; samples: string[] }>();
     for (const a of inc.alerts) {
       for (const [type, value] of [
         ["user", a.user],
@@ -109,15 +109,21 @@ export async function GET() {
       ] as [GraphEntityType, string | null][]) {
         if (!value || !value.trim()) continue;
         const key = `${type}:${value}`;
-        if (seenEntities.has(key)) continue;
-        seenEntities.add(key);
-        links.push({
-          source: key,
-          target: `inc:${inc.id}`,
-          severity,
-          incidentDbId: inc.id,
-        });
+        const st = entLinkStats.get(key) ?? { count: 0, samples: [] };
+        st.count += 1;
+        if (st.samples.length < 3) st.samples.push(a.alertId);
+        entLinkStats.set(key, st);
       }
+    }
+    for (const [key, stats] of entLinkStats) {
+      links.push({
+        source: key,
+        target: `inc:${inc.id}`,
+        severity,
+        incidentDbId: inc.id,
+        alertCount: stats.count,
+        sampleAlertIds: [...stats.samples],
+      });
     }
   }
 

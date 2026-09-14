@@ -208,3 +208,16 @@ Stage Summary:
 - 5 SOC views + ack triage workflow + presets + pan/zoom graph + persistent tab state. DB: 40 alerts / 8 incidents / 38 unacked / 1 analyzed; simulation OFF.
 - Remaining ideas: acknowledge-all button + bulk actions, alert detail drawer, PDF for ALL incidents (bundle export), graph edge-click metadata, per-user audit trail on notes, drag node repositioning.
 - Risks: none known. jsPDF only in a lazy chunk (~0 impact on initial load). Ack/presets are additive schema/storage changes; no auth model (demo MVP).
+---
+Task ID: r5 (webDevReview round 5 — RECONSTRUCTED: work found uncommitted-in-flight, verified + logged by r6)
+Agent: Z.ai Code (main)
+Task: (previous session, unlogged) Bulk ack workflow + alert detail drawer + analyst identity audit trail
+
+Work Log (reconstructed by r6 from code inspection + browser verification):
+- FEATURE 1 — BULK ACK/SELECT: table checkbox column ("Select all visible alerts" header + per-row), bulk triage toolbar ("N selected" + Acknowledge selected/Clear), POST /api/alerts/bulk-ack (accepts cuids or alertIds, updateMany, MAX 500).
+- FEATURE 2 — ALERT DETAIL DRAWER (alert-drawer.tsx): right Sheet with alertId + raw severity + ACK badge, entities grid (user/device/ip), description, correlation status (linked → "Open in Incident Analysis" deep-link; uncorrelated explainer), raw metadata JSON viewer, footer Ack toggle + Copy JSON. Wired from row click in Threat Feed (checkbox clicks stopPropagation'd — verified NOT opening drawer).
+- FEATURE 3 — ANALYST IDENTITY AUDIT TRAIL: localStorage "sentinelai.analystName" + identity input beside notes; PATCH /api/incidents/[id] stamps notes as "[name · timestamp] …" (defaults "Analyst").
+- r6 VERIFICATION (browser QA): select-all → 40 acked → summary unacked 40→0 → bulk-clear → re-ack FILE-001/002 (state restored to 38 unacked); drawer round-trip on FILE-001 (uncorrelated view) + correlated alert (INC-1008 "Open in Incident Analysis" deep-link works, tab persisted); lint + tsc clean; zero console errors.
+
+Stage Summary:
+- r5 features all functional and now officially logged. Data state restored to 40 alerts / 8 incidents / 38 unacked / INC-1001 analyzed.

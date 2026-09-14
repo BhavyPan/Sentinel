@@ -1,0 +1,782 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useMemo, useRef, useState } from "react";
+     4→import { useQuery } from "@tanstack/react-query";
+     5→import { motion } from "framer-motion";
+     6→import {
+     7→  Maximize,
+     8→  Network,
+     9→  MousePointerClick,
+    10→  ShieldAlert,
+    11→  Users,
+    12→  HardDrive,
+    13→  Globe,
+    14→  ZoomIn,
+    15→  ZoomOut,
+    16→} from "lucide-react";
+    17→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    18→import { Button } from "@/components/ui/button";
+    19→import { Skeleton } from "@/components/ui/skeleton";
+    20→import { ErrorState } from "@/components/soc/error-state";
+    21→import { EmptyHero } from "@/components/soc/empty-hero";
+    22→import { apiGet } from "@/lib/api-client";
+    23→import type { GraphData, GraphNode } from "@/lib/types";
+    24→import { severityStyle } from "@/lib/ui-helpers";
+    25→import { useSocStore } from "@/store/soc-store";
+    26→import { cn } from "@/lib/utils";
+    27→
+    28→// ------------------------------------------------------------------
+    29→// Layout math — deterministic radial "attack cluster" layout
+    30→// ------------------------------------------------------------------
+    31→
+    32→const VB_W = 960;
+    33→const VB_H = 720;
+    34→const CX = VB_W / 2;
+    35→const CY = VB_H / 2;
+    36→const R_INCIDENT = 180;
+    37→const R_ENTITY = 300;
+    38→
+    39→const SEV_RANK: Record<string, number> = {
+    40→  Critical: 0, High: 1, Medium: 2, Low: 3, "False Positive": 4, Info: 5,
+    41→};
+    42→
+    43→interface Positioned {
+    44→  node: GraphNode;
+    45→  x: number;
+    46→  y: number;
+    47→}
+    48→
+    49→function polar(r: number, angle: number): { x: number; y: number } {
+    50→  return { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) };
+    51→}
+    52→
+    53→/** Hash a string into 0..1 — deterministic jitter for label offsets. */
+    54→function hash01(s: string): number {
+    55→  let h = 2166136261;
+    56→  for (let i = 0; i < s.length; i++) {
+    57→    h ^= s.charCodeAt(i);
+    58→    h = Math.imul(h, 16777619);
+    59→  }
+    60→  return ((h >>> 0) % 1000) / 1000;
+    61→}
+    62→
+    63→/**
+    64→ * Deterministic post-pass: nudge entity nodes apart until no two label boxes
+    65→ * overlap (labels render below glyphs, mono ~5.4px/char). Incident nodes stay fixed.
+    66→ */
+    67→function resolveLabelCollisions(positions: Map<string, Positioned>) {
+    68→  const ents = [...positions.values()].filter((p) => p.node.kind === "entity");
+    69→  const halfW = (p: Positioned) => (Math.min(p.node.label.length, 16) * 5.4) / 2 + 5;
+    70→  const MIN_GAP = 6;
+    71→
+    72→  for (let pass = 0; pass < 40; pass++) {
+    73→    let movedAny = false;
+    74→    for (let i = 0; i < ents.length; i++) {
+    75→      for (let j = i + 1; j < ents.length; j++) {
+    76→        const a = ents[i];
+    77→        const b = ents[j];
+    78→        const dx = b.x - a.x;
+    79→        const dy = b.y - a.y;
+    80→        const needX = halfW(a) + halfW(b) + MIN_GAP;
+    81→        const needY = 22; // glyph + label stack height
+    82→        const overlapX = needX - Math.abs(dx);
+    83→        const overlapY = needY - Math.abs(dy);
+    84→        if (overlapX <= 0 || overlapY <= 0) continue;
+    85→
+    86→        // push apart along the dominant separation axis (stable, less drift)
+    87→        let pushX = 0;
+    88→        let pushY = 0;
+    89→        if (overlapX / needX >= overlapY / needY) {
+    90→          const dir = dx >= 0 ? 1 : -1;
+    91→          // if vertically stacked, prefer horizontal slide opposite to overlap direction
+    92→          pushX = (overlapX / 2 + 0.5) * dir;
+    93→        } else {
+    94→          const dir = dy >= 0 ? 1 : -1;
+    95→          pushY = (overlapY / 2 + 0.5) * dir;
+    96→        }
+    97→        a.x += pushX;
+    98→        a.y += pushY;
+    99→        b.x -= pushX;
+   100→        b.y -= pushY;
+   101→        movedAny = true;
+   102→      }
+   103→    }
+   104→    // keep entities inside a sane ring band so the cluster shape survives
+   105→    for (const e of ents) {
+   106→      const dx = e.x - CX;
+   107→      const dy = e.y - CY;
+   108→      const r = Math.hypot(dx, dy) || 1;
+   109→      const clamped = Math.min(Math.max(r, R_ENTITY - 110), R_ENTITY + 135);
+   110→      if (Math.abs(clamped - r) > 0.01) {
+   111→        e.x = CX + (dx / r) * clamped;
+   112→        e.y = CY + (dy / r) * clamped;
+   113→      }
+   114→    }
+   115→    if (!movedAny) break;
+   116→  }
+   117→}
+   118→
+   119→function computeLayout(data: GraphData) {
+   120→  const incidents = data.nodes
+   121→    .filter((n) => n.kind === "incident")
+   122→    .sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || b.weight - a.weight);
+   123→
+   124→  const entityById = new Map(data.nodes.filter((n) => n.kind === "entity").map((n) => [n.id, n]));
+   125→
+   126→  // group entities by their highest-priority incident
+   127→  const clusterEntities = new Map<string, GraphNode[]>();
+   128→  const orphans: GraphNode[] = [];
+   129→  const entityIncident = new Map<string, string>(); // entity id -> incident node id
+   130→
+   131→  for (const [id, ent] of entityById) {
+   132→    const incNode = incidents.find((i) => ent.incidentDbIds.includes(i.incidentDbIds[0]));
+   133→    if (incNode && ent.incidentDbIds.length > 0) {
+   134→      // pick the highest-priority incident this entity connects to
+   135→      const best = ent.incidentDbIds
+   136→        .map((dbId) => incidents.find((i) => i.incidentDbIds[0] === dbId))
+   137→        .filter(Boolean)
+   138→        .sort((a, b) => (SEV_RANK[a!.severity] ?? 9) - (SEV_RANK[b!.severity] ?? 9))[0];
+   139→      const arr = clusterEntities.get(best!.id) ?? [];
+   140→      arr.push(ent);
+   141→      clusterEntities.set(best!.id, arr);
+   142→      entityIncident.set(id, best!.id);
+   143→    } else {
+   144→      orphans.push(ent);
+   145→    }
+   146→  }
+   147→
+   148→  const positions = new Map<string, Positioned>();
+   149→
+   150→  incidents.forEach((inc, i) => {
+   151→    const angle = (i / Math.max(incidents.length, 1)) * Math.PI * 2 - Math.PI / 2;
+   152→    const p = polar(R_INCIDENT, angle);
+   153→    positions.set(inc.id, { node: inc, x: p.x, y: p.y });
+   154→
+   155→    const members = (clusterEntities.get(inc.id) ?? []).sort(
+   156→      (a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || a.label.localeCompare(b.label)
+   157→    );
+   158→    // wide enough angular window per cluster + radial stagger to avoid label overlap
+   159→    const spread = Math.min(1.7, 0.36 * members.length);
+   160→    members.forEach((ent, j) => {
+   161→      const off = members.length === 1 ? 0 : (j / (members.length - 1) - 0.5) * spread;
+   162→      const ea = angle + off + (hash01(ent.id) - 0.5) * 0.05;
+   163→      const ring = R_ENTITY + ((j % 3) - 1) * 34 + (hash01(ent.id + "r") - 0.5) * 18;
+   164→      const ep = polar(ring, ea);
+   165→      positions.set(ent.id, { node: ent, x: ep.x, y: ep.y });
+   166→    });
+   167→  });
+   168→
+   169→  orphans
+   170→    .sort((a, b) => a.label.localeCompare(b.label))
+   171→    .forEach((ent, j) => {
+   172→      const angle = (j / Math.max(orphans.length, 1)) * Math.PI * 2 - Math.PI / 2 + Math.PI / Math.max(orphans.length, 1) / 2;
+   173→      const ring = R_ENTITY + 46 + (j % 2 ? 34 : 0); // alternate rings to avoid label collisions
+   174→      const p = polar(ring, angle);
+   175→      positions.set(ent.id, { node: ent, x: p.x, y: p.y });
+   176→    });
+   177→
+   178→  resolveLabelCollisions(positions);
+   179→
+   180→  return { positions, incidents, entityById };
+   181→}
+   182→
+   183→// ------------------------------------------------------------------
+   184→// Node rendering helpers
+   185→// ------------------------------------------------------------------
+   186→
+   187→function EntityGlyph({
+   188→  node,
+   189→  x,
+   190→  y,
+   191→  hovered,
+   192→  dimmed,
+   193→  onClick,
+   194→  onFocus,
+   195→}: {
+   196→  node: GraphNode;
+   197→  x: number;
+   198→  y: number;
+   199→  hovered: boolean;
+   200→  dimmed: boolean;
+   201→  onClick: () => void;
+   202→  onFocus: () => void;
+   203→}) {
+   204→  const sev = severityStyle(node.severity);
+   205→  const size = 7 + Math.min(node.alertCount, 8) * 0.55; // 7..11.4
+   206→  const stroke = node.malicious ? "#ef4444" : sev.hex;
+   207→  const isType = node.entityType;
+   208→
+   209→  const common = {
+   210→    fill: "oklch(0.168 0.012 240)",
+   211→    stroke,
+   212→    strokeWidth: hovered ? 2.5 : 1.5,
+   213→    className: cn(
+   214→      "cursor-pointer transition-[opacity,stroke-width] duration-200",
+   215→      dimmed ? "opacity-15" : "opacity-100"
+   216→    ),
+   217→  };
+   218→
+   219→  return (
+   220→    <g
+   221→      transform={`translate(${x},${y})`}
+   222→      role="button"
+   223→      tabIndex={0}
+   224→      aria-label={`${node.entityType ?? "entity"}: ${node.label} — ${node.sublabel}`}
+   225→      onClick={onClick}
+   226→      onKeyDown={(e) => {
+   227→        if (e.key === "Enter" || e.key === " ") {
+   228→          e.preventDefault();
+   229→          onClick();
+   230→        }
+   231→      }}
+   232→      onFocus={onFocus}
+   233→      onMouseEnter={onFocus}
+   234→      className="outline-none focus-visible:[&>*:first-child]:stroke-emerald-300"
+   235→    >
+   236→      {isType === "user" && <circle r={size} {...common} />}
+   237→      {isType === "device" && (
+   238→        <rect x={-size} y={-size} width={size * 2} height={size * 2} rx={3} {...common} />
+   239→      )}
+   240→      {isType === "ip" && (
+   241→        <rect x={-size} y={-size} width={size * 2} height={size * 2} rx={1.5} transform="rotate(45)" {...common} />
+   242→      )}
+   243→      {!isType && <circle r={size} {...common} />}
+   244→      {node.malicious && (
+   245→        <circle r={size + 4.5} fill="none" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" className="animate-[spin_9s_linear_infinite]" style={{ transformOrigin: "center", transformBox: "fill-box" }} />
+   246→      )}
+   247→      <text
+   248→        y={size + 11}
+   249→        textAnchor="middle"
+   250→        fontSize={9.5}
+   251→        className={cn("pointer-events-none select-none font-mono transition-opacity duration-200", dimmed ? "opacity-15" : "fill-foreground/75")}
+   252→      >
+   253→        {node.label.length > 16 ? node.label.slice(0, 15) + "…" : node.label}
+   254→      </text>
+   255→    </g>
+   256→  );
+   257→}
+   258→
+   259→function IncidentGlyph({
+   260→  node,
+   261→  x,
+   262→  y,
+   263→  hovered,
+   264→  dimmed,
+   265→  onClick,
+   266→  onFocus,
+   267→}: {
+   268→  node: GraphNode;
+   269→  x: number;
+   270→  y: number;
+   271→  hovered: boolean;
+   272→  dimmed: boolean;
+   273→  onClick: () => void;
+   274→  onFocus: () => void;
+   275→}) {
+   276→  const sev = severityStyle(node.severity);
+   277→  const r = 15 + Math.min(node.weight, 100) / 100 * 9; // 15..24
+   278→  const critical = node.severity === "Critical";
+   279→  return (
+   280→    <g
+   281→      transform={`translate(${x},${y})`}
+   282→      role="button"
+   283→      tabIndex={0}
+   284→      aria-label={`incident ${node.label} — ${node.sublabel}`}
+   285→      onClick={onClick}
+   286→      onKeyDown={(e) => {
+   287→        if (e.key === "Enter" || e.key === " ") {
+   288→          e.preventDefault();
+   289→          onClick();
+   290→        }
+   291→      }}
+   292→      onFocus={onFocus}
+   293→      onMouseEnter={onFocus}
+   294→      className={cn("cursor-pointer outline-none transition-opacity duration-200", dimmed ? "opacity-15" : "opacity-100")}
+   295→    >
+   296→      {critical && (
+   297→        <circle r={r + 7} fill="none" stroke={sev.hex} strokeWidth={1} opacity={0.5} className="animate-ping" />
+   298→      )}
+   299→      <circle
+   300→        r={hovered ? r + 2 : r}
+   301→        fill={sev.hex}
+   302→        fillOpacity={0.22}
+   303→        stroke={sev.hex}
+   304→        strokeWidth={hovered ? 3 : 2}
+   305→        className="transition-all duration-200"
+   306→        style={{ filter: `drop-shadow(0 0 6px ${sev.hex}66)` }}
+   307→      />
+   308→      <circle r={3} fill={sev.hex} className="pointer-events-none" />
+   309→      <text
+   310→        y={r + 14}
+   311→        textAnchor="middle"
+   312→        fontSize={11}
+   313→        fontWeight={700}
+   314→        className={cn("pointer-events-none select-none font-mono transition-opacity duration-200", dimmed ? "opacity-15" : severityStyle(node.severity).text)}
+   315→      >
+   316→        {node.label}
+   317→      </text>
+   318→    </g>
+   319→  );
+   320→}
+   321→
+   322→// ------------------------------------------------------------------
+   323→// Info panel (hover details)
+   324→// ------------------------------------------------------------------
+   325→
+   326→function NodeInfoBox({ node }: { node: GraphNode | null }) {
+   327→  if (!node) {
+   328→    return (
+   329→      <div className="rounded-lg border border-dashed border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
+   330→        Hover a node to inspect entities &amp; incidents — click to open the investigation.
+   331→      </div>
+   332→    );
+   333→  }
+   334→  const sev = severityStyle(node.severity);
+   335→  const TypeIcon = node.entityType === "user" ? Users : node.entityType === "device" ? HardDrive : Globe;
+   336→  return (
+   337→    <div className="rounded-lg border border-border bg-background/80 px-3 py-2.5 shadow-lg backdrop-blur">
+   338→      <div className="flex items-center gap-2">
+   339→        {node.kind === "entity" ? (
+   340→          <TypeIcon className="size-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
+   341→        ) : (
+   342→          <ShieldAlert className={cn("size-3.5 shrink-0", sev.text)} aria-hidden="true" />
+   343→        )}
+   344→        <span className="font-mono text-xs font-bold text-foreground">{node.label}</span>
+   345→        {node.malicious && (
+   346→          <span className="rounded border border-red-500/40 bg-red-500/10 px-1 py-px font-mono text-[9px] font-bold uppercase text-red-300">
+   347→            malicious ip
+   348→          </span>
+   349→        )}
+   350→        {node.internal === true && (
+   351→          <span className="rounded border border-border bg-muted/60 px-1 py-px font-mono text-[9px] uppercase text-muted-foreground">
+   352→            internal
+   353→          </span>
+   354→        )}
+   355→        <span className={cn("ml-auto rounded-full border px-1.5 py-px font-mono text-[9px] font-semibold uppercase", sev.border, sev.bg, sev.text)}>
+   356→          {node.severity}
+   357→        </span>
+   358→      </div>
+   359→      <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{node.sublabel}</p>
+   360→      {node.kind === "entity" && node.entityType && (
+   361→        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-emerald-400/70">
+   362→          {node.entityType} node · {node.alertCount} alert{node.alertCount === 1 ? "" : "s"}
+   363→        </p>
+   364→      )}
+   365→    </div>
+   366→  );
+   367→}
+   368→
+   369→// ------------------------------------------------------------------
+   370→// Skeleton / empty
+   371→// ------------------------------------------------------------------
+   372→
+   373→function GraphSkeleton() {
+   374→  return (
+   375→    <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading threat graph">
+   376→      <div className="flex flex-wrap items-center gap-2">
+   377→        <Skeleton className="h-8 w-52 rounded-lg" />
+   378→        <Skeleton className="h-8 w-64 rounded-lg" />
+   379→      </div>
+   380→      <Skeleton className="h-[560px] w-full rounded-xl" />
+   381→    </div>
+   382→  );
+   383→}
+   384→
+   385→// ------------------------------------------------------------------
+   386→// Tab root
+   387→// ------------------------------------------------------------------
+   388→
+   389→type TypeFilter = "all" | "user" | "device" | "ip";
+   390→
+   391→const FILTERS: { value: TypeFilter; label: string }[] = [
+   392→  { value: "all", label: "All entities" },
+   393→  { value: "user", label: "Users" },
+   394→  { value: "device", label: "Devices" },
+   395→  { value: "ip", label: "IPs" },
+   396→];
+   397→
+   398→// ------------------------------------------------------------------
+   399→// Pan & zoom (viewBox based — deterministic, no layout drift)
+   400→// ------------------------------------------------------------------
+   401→
+   402→interface ViewState {
+   403→  x: number;
+   404→  y: number;
+   405→  k: number;
+   406→}
+   407→
+   408→const K_MIN = 0.55;
+   409→const K_MAX = 3;
+   410→
+   411→function clampView(v: ViewState): ViewState {
+   412→  const w = VB_W / v.k;
+   413→  const h = VB_H / v.k;
+   414→  return {
+   415→    k: v.k,
+   416→    x: Math.min(Math.max(v.x, -w * 0.35), w * 0.35),
+   417→    y: Math.min(Math.max(v.y, -h * 0.35), h * 0.35),
+   418→  };
+   419→}
+   420→
+   421→export function ThreatGraph() {
+   422→  const openIncidentRaw = useSocStore((s) => s.openIncident);
+   423→  const [hoverId, setHoverId] = useState<string | null>(null);
+   424→  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+   425→  const [view, setView] = useState<ViewState>({ x: 0, y: 0, k: 1 });
+   426→  const svgRef = useRef<SVGSVGElement | null>(null);
+   427→  const panRef = useRef<{
+   428→    sx: number;
+   429→    sy: number;
+   430→    vx: number;
+   431→    vy: number;
+   432→    rectW: number;
+   433→    rectH: number;
+   434→    moved: boolean;
+   435→  } | null>(null);
+   436→  const didPanRef = useRef(false);
+   437→
+   438→  const zoomAt = (factor: number, mx = 0.5, my = 0.5) => {
+   439→    setView((v) => {
+   440→      const k2 = Math.min(K_MAX, Math.max(K_MIN, v.k * factor));
+   441→      const px = v.x + mx * (VB_W / v.k);
+   442→      const py = v.y + my * (VB_H / v.k);
+   443→      return clampView({ k: k2, x: px - mx * (VB_W / k2), y: py - my * (VB_H / k2) });
+   444→    });
+   445→  };
+   446→
+   447→  const resetView = () => setView({ x: 0, y: 0, k: 1 });
+   448→
+   449→  // wheel zoom — non-passive so we can stop page scroll over the canvas
+   450→  useEffect(() => {
+   451→    const svg = svgRef.current;
+   452→    if (!svg) return;
+   453→    const onWheel = (e: WheelEvent) => {
+   454→      e.preventDefault();
+   455→      const rect = svg.getBoundingClientRect();
+   456→      const mx = (e.clientX - rect.left) / rect.width;
+   457→      const my = (e.clientY - rect.top) / rect.height;
+   458→      zoomAt(Math.exp(-e.deltaY * 0.0016), mx, my);
+   459→    };
+   460→    svg.addEventListener("wheel", onWheel, { passive: false });
+   461→    return () => svg.removeEventListener("wheel", onWheel);
+   462→  }, []);
+   463→
+   464→  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+   465→    if (e.button !== 0) return;
+   466→    const svg = svgRef.current;
+   467→    if (!svg) return;
+   468→    const rect = svg.getBoundingClientRect();
+   469→    panRef.current = {
+   470→      sx: e.clientX,
+   471→      sy: e.clientY,
+   472→      vx: view.x,
+   473→      vy: view.y,
+   474→      rectW: rect.width,
+   475→      rectH: rect.height,
+   476→      moved: false,
+   477→    };
+   478→    didPanRef.current = false;
+   479→    try {
+   480→      svg.setPointerCapture(e.pointerId);
+   481→    } catch {
+   482→      // synthetic/already-released pointers have no active pointer id —
+   483→      // pan still works while the cursor stays inside the svg
+   484→    }
+   485→  };
+   486→
+   487→  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+   488→    const p = panRef.current;
+   489→    if (!p) return;
+   490→    if (!p.moved && Math.abs(e.clientX - p.sx) + Math.abs(e.clientY - p.sy) > 4) {
+   491→      p.moved = true;
+   492→      didPanRef.current = true;
+   493→    }
+   494→    if (!p.moved) return;
+   495→    const dx = (e.clientX - p.sx) * (VB_W / p.rectW);
+   496→    const dy = (e.clientY - p.sy) * (VB_H / p.rectH);
+   497→    setView((v) => clampView({ ...v, x: p.vx - dx, y: p.vy - dy }));
+   498→  };
+   499→
+   500→  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+   501→    if (panRef.current) {
+   502→      panRef.current = null;
+   503→      try {
+   504→        svgRef.current?.releasePointerCapture?.(e.pointerId);
+   505→      } catch {
+   506→        // pointer may already be released
+   507→      }
+   508→      // click fires right after pointerup — keep the didPan flag for that tick
+   509→      setTimeout(() => {
+   510→        didPanRef.current = false;
+   511→      }, 0);
+   512→    }
+   513→  };
+   514→
+   515→  const query = useQuery({
+   516→    queryKey: ["graph"],
+   517→    queryFn: () => apiGet<GraphData>("/api/graph"),
+   518→  });
+   519→
+   520→  const { positions, incidents } = useMemo(
+   521→    () => (query.data ? computeLayout(query.data) : { positions: new Map<string, Positioned>(), incidents: [] }),
+   522→    [query.data]
+   523→  );
+   524→
+   525→  const data = query.data;
+   526→  const neighbors = useMemo(() => {
+   527→    const m = new Map<string, Set<string>>();
+   528→    for (const l of data?.links ?? []) {
+   529→      if (!m.has(l.source)) m.set(l.source, new Set());
+   530→      if (!m.has(l.target)) m.set(l.target, new Set());
+   531→      m.get(l.source)!.add(l.target);
+   532→      m.get(l.target)!.add(l.source);
+   533→    }
+   534→    return m;
+   535→  }, [data]);
+   536→
+   537→  if (query.isLoading) return <GraphSkeleton />;
+   538→  if (query.isError) {
+   539→    return (
+   540→      <ErrorState
+   541→        message={query.error instanceof Error ? query.error.message : undefined}
+   542→        onRetry={() => query.refetch()}
+   543→      />
+   544→    );
+   545→  }
+   546→  if (!data || data.nodes.length === 0) return <EmptyHero />;
+   547→
+   548→  const hoverNode = hoverId ? data.nodes.find((n) => n.id === hoverId) ?? null : null;
+   549→
+   550→  const isDimmed = (id: string): boolean => {
+   551→    if (!hoverId) return false;
+   552→    if (id === hoverId) return false;
+   553→    return !(neighbors.get(hoverId)?.has(id) ?? false);
+   554→  };
+   555→
+   556→  const entityVisible = (n: GraphNode): boolean =>
+   557→    typeFilter === "all" || n.entityType === typeFilter;
+   558→
+   559→  const openNode = (node: GraphNode) => {
+   560→    if (didPanRef.current) return; // ignore clicks that were actually drags
+   561→    if (node.incidentDbIds.length > 0) openIncidentRaw(node.incidentDbIds[0]);
+   562→  };
+   563→
+   564→  const linkVisible = (sourceId: string, targetId: string): boolean => {
+   565→    const s = data.nodes.find((n) => n.id === sourceId);
+   566→    return s ? entityVisible(s) : true;
+   567→  };
+   568→
+   569→  return (
+   570→    <div className="flex flex-col gap-4 sm:gap-6">
+   571→      {/* toolbar */}
+   572→      <motion.div
+   573→        initial={{ opacity: 0, y: 10 }}
+   574→        animate={{ opacity: 1, y: 0 }}
+   575→        transition={{ duration: 0.35 }}
+   576→      >
+   577→        <Card className="rounded-xl p-4">
+   578→          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+   579→            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Entity type filter">
+   580→              {FILTERS.map((f) => (
+   581→                <button
+   582→                  key={f.value}
+   583→                  type="button"
+   584→                  onClick={() => setTypeFilter(f.value)}
+   585→                  aria-pressed={typeFilter === f.value}
+   586→                  className={cn(
+   587→                    "inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+   588→                    typeFilter === f.value
+   589→                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+   590→                      : "border-border bg-muted/40 text-muted-foreground hover:border-emerald-500/30 hover:text-foreground"
+   591→                  )}
+   592→                >
+   593→                  <Network className="size-3.5" aria-hidden="true" />
+   594→                  {f.label}
+   595→                </button>
+   596→              ))}
+   597→            </div>
+   598→            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground">
+   599→              {(["Critical", "High", "Medium", "Low", "False Positive"] as const).map((sev) => (
+   600→                <span key={sev} className="flex items-center gap-1.5">
+   601→                  <span className={cn("size-2 rounded-full", severityStyle(sev).dot)} aria-hidden="true" />
+   602→                  {sev}
+   603→                </span>
+   604→              ))}
+   605→              <span className="hidden items-center gap-1.5 sm:flex">
+   606→                <span className="size-2 rotate-45 border border-red-500" aria-hidden="true" />
+   607→                malicious IP
+   608→              </span>
+   609→            </div>
+   610→          </div>
+   611→          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+   612→            <span className="font-mono">{data.stats.entityCount} entities</span>
+   613→            <span className="font-mono">{data.stats.incidentCount} incidents</span>
+   614→            <span className="font-mono">{data.stats.linkCount} relationships</span>
+   615→            {data.stats.unlinkedAlerts > 0 && (
+   616→              <span className="font-mono text-amber-400/80">{data.stats.unlinkedAlerts} unlinked alerts</span>
+   617→            )}
+   618→            <span className="ml-auto hidden items-center gap-1.5 md:flex">
+   619→              <MousePointerClick className="size-3.5" aria-hidden="true" />
+   620→              click a node to open its incident · drag to pan · scroll or +/- to zoom
+   621→            </span>
+   622→          </div>
+   623→        </Card>
+   624→      </motion.div>
+   625→
+   626→      {/* graph */}
+   627→      <motion.div
+   628→        initial={{ opacity: 0, y: 10 }}
+   629→        animate={{ opacity: 1, y: 0 }}
+   630→        transition={{ duration: 0.4, delay: 0.08 }}
+   631→      >
+   632→        <Card className="overflow-hidden rounded-xl p-0">
+   633→          <CardHeader className="border-b border-border/70 py-4">
+   634→            <div className="flex flex-wrap items-center justify-between gap-3">
+   635→              <div>
+   636→                <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+   637→                  <Network className="size-4 text-emerald-400" aria-hidden="true" />
+   638→                  Entity Relationship Graph
+   639→                </CardTitle>
+   640→                <CardDescription className="mt-1 text-xs">
+   641→                  Inner ring: correlated incidents · outer ring: users, devices and IPs clustered by the
+   642→                  incident they appear in
+   643→                </CardDescription>
+   644→              </div>
+   645→              <div className="w-full max-w-sm lg:w-auto">
+   646→                <NodeInfoBox node={hoverNode} />
+   647→              </div>
+   648→            </div>
+   649→          </CardHeader>
+   650→          <CardContent className="p-0">
+   651→            <div className="relative">
+   652→              {/* zoom controls */}
+   653→              <div className="absolute right-3 top-3 z-10 flex flex-col items-center gap-1.5">
+   654→                <Button
+   655→                  type="button"
+   656→                  variant="outline"
+   657→                  size="icon"
+   658→                  className="size-8 bg-background/85 backdrop-blur"
+   659→                  onClick={() => zoomAt(1.25)}
+   660→                  aria-label="Zoom in"
+   661→                >
+   662→                  <ZoomIn className="size-4" aria-hidden="true" />
+   663→                </Button>
+   664→                <Button
+   665→                  type="button"
+   666→                  variant="outline"
+   667→                  size="icon"
+   668→                  className="size-8 bg-background/85 backdrop-blur"
+   669→                  onClick={() => zoomAt(0.8)}
+   670→                  aria-label="Zoom out"
+   671→                >
+   672→                  <ZoomOut className="size-4" aria-hidden="true" />
+   673→                </Button>
+   674→                <Button
+   675→                  type="button"
+   676→                  variant="outline"
+   677→                  size="icon"
+   678→                  className="size-8 bg-background/85 backdrop-blur"
+   679→                  onClick={resetView}
+   680→                  aria-label="Reset pan and zoom"
+   681→                >
+   682→                  <Maximize className="size-4" aria-hidden="true" />
+   683→                </Button>
+   684→                <span
+   685→                  className="rounded border border-border bg-background/85 px-1 py-px font-mono text-[9px] text-muted-foreground backdrop-blur"
+   686→                  aria-live="polite"
+   687→                >
+   688→                  {Math.round(view.k * 100)}%
+   689→                </span>
+   690→              </div>
+   691→              <div className="soc-scroll overflow-x-auto">
+   692→                <svg
+   693→                  ref={svgRef}
+   694→                  viewBox={`${view.x} ${view.y} ${VB_W / view.k} ${VB_H / view.k}`}
+   695→                  className="h-auto min-w-[760px] w-full cursor-grab touch-none select-none active:cursor-grabbing"
+   696→                  role="img"
+   697→                  aria-label="Threat graph: entities linked to incidents"
+   698→                  onPointerDown={onPointerDown}
+   699→                  onPointerMove={onPointerMove}
+   700→                  onPointerUp={onPointerUp}
+   701→                  onPointerCancel={onPointerUp}
+   702→                >
+   703→                {/* faint ring guides */}
+   704→                <circle cx={CX} cy={CY} r={R_INCIDENT} fill="none" stroke="oklch(1 0 0 / 4%)" strokeDasharray="2 6" />
+   705→                <circle cx={CX} cy={CY} r={R_ENTITY} fill="none" stroke="oklch(1 0 0 / 3%)" strokeDasharray="2 6" />
+   706→                <circle cx={CX} cy={CY} r={R_ENTITY + 46} fill="none" stroke="oklch(1 0 0 / 2%)" strokeDasharray="2 6" />
+   707→
+   708→                {/* links */}
+   709→                {data.links.map((l) => {
+   710→                  const s = positions.get(l.source);
+   711→                  const t = positions.get(l.target);
+   712→                  if (!s || !t) return null;
+   713→                  const sev = severityStyle(l.severity);
+   714→                  const mx = (s.x + t.x) / 2;
+   715→                  const my = (s.y + t.y) / 2;
+   716→                  // control point pulled toward center → gentle arc
+   717→                  const cx = mx + (CX - mx) * 0.22;
+   718→                  const cy = my + (CY - my) * 0.22;
+   719→                  const active = hoverId === l.source || hoverId === l.target;
+   720→                  const dim = hoverId && !active;
+   721→                  const hidden = !linkVisible(l.source, l.target);
+   722→                  if (hidden) return null;
+   723→                  return (
+   724→                    <path
+   725→                      key={`${l.source}->${l.target}`}
+   726→                      d={`M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`}
+   727→                      fill="none"
+   728→                      stroke={sev.hex}
+   729→                      strokeWidth={active ? 2.4 : 1.1}
+   730→                      strokeOpacity={active ? 0.9 : dim ? 0.08 : 0.3}
+   731→                      className="transition-all duration-200"
+   732→                    />
+   733→                  );
+   734→                })}
+   735→
+   736→                {/* entity nodes */}
+   737→                {data.nodes
+   738→                  .filter((n) => n.kind === "entity" && entityVisible(n) && positions.has(n.id))
+   739→                  .map((n) => {
+   740→                    const p = positions.get(n.id)!;
+   741→                    return (
+   742→                      <EntityGlyph
+   743→                        key={n.id}
+   744→                        node={n}
+   745→                        x={p.x}
+   746→                        y={p.y}
+   747→                        hovered={hoverId === n.id}
+   748→                        dimmed={isDimmed(n.id)}
+   749→                        onClick={() => openNode(n)}
+   750→                        onFocus={() => setHoverId(n.id)}
+   751→                      />
+   752→                    );
+   753→                  })}
+   754→
+   755→                {/* incident nodes on top */}
+   756→                {incidents
+   757→                  .filter((n) => positions.has(n.id))
+   758→                  .map((n) => {
+   759→                    const p = positions.get(n.id)!;
+   760→                    return (
+   761→                      <IncidentGlyph
+   762→                        key={n.id}
+   763→                        node={n}
+   764→                        x={p.x}
+   765→                        y={p.y}
+   766→                        hovered={hoverId === n.id}
+   767→                        dimmed={isDimmed(n.id)}
+   768→                        onClick={() => openNode(n)}
+   769→                        onFocus={() => setHoverId(n.id)}
+   770→                      />
+   771→                    );
+   772→                  })}
+   773→              </svg>
+   774→              </div>
+   775→            </div>
+   776→          </CardContent>
+   777→        </Card>
+   778→      </motion.div>
+   779→    </div>
+   780→  );
+   781→}
+   782→
