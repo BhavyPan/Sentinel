@@ -1,0 +1,809 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useState } from "react";
+     4→import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+     5→import { toast } from "sonner";
+     6→import { motion } from "framer-motion";
+     7→import {
+     8→  CheckCircle2,
+     9→  Copy,
+    10→  Crosshair,
+    11→  Download,
+    12→  FileText,
+    13→  Loader2,
+    14→  Radar,
+    15→  ShieldAlert,
+    16→  ShieldCheck,
+    17→  Sparkles,
+    18→  Target,
+    19→  ThumbsDown,
+    20→  ThumbsUp,
+    21→  X,
+    22→} from "lucide-react";
+    23→import {
+    24→  Card,
+    25→  CardContent,
+    26→  CardDescription,
+    27→  CardHeader,
+    28→  CardTitle,
+    29→} from "@/components/ui/card";
+    30→import { Button } from "@/components/ui/button";
+    31→import { Skeleton } from "@/components/ui/skeleton";
+    32→import {
+    33→  Select,
+    34→  SelectContent,
+    35→  SelectItem,
+    36→  SelectTrigger,
+    37→  SelectValue,
+    38→} from "@/components/ui/select";
+    39→import {
+    40→  ClassificationBadge,
+    41→  EventChip,
+    42→  SeverityBadge,
+    43→  SourceChip,
+    44→  StatusBadge,
+    45→} from "@/components/soc/badges";
+    46→import { ScoreGauge } from "@/components/soc/threat-score";
+    47→import { ErrorState } from "@/components/soc/error-state";
+    48→import { apiGet, apiSend } from "@/lib/api-client";
+    49→import type {
+    50→  Classification,
+    51→  IncidentDetailDTO,
+    52→  IncidentDTO,
+    53→  IncidentStatus,
+    54→  IncidentUpdatePayload,
+    55→} from "@/lib/types";
+    56→import {
+    57→  formatDateTime,
+    58→  rawSeverityLabel,
+    59→  scoreTextClass,
+    60→  severityStyle,
+    61→  timeAgo,
+    62→  unwrapList,
+    63→} from "@/lib/ui-helpers";
+    64→import { useSocStore } from "@/store/soc-store";
+    65→import { cn } from "@/lib/utils";
+    66→
+    67→const ANALYZE_LINES = [
+    68→  "Consulting threat analyst model…",
+    69→  "Cross-referencing MITRE ATT&CK…",
+    70→  "Drafting BLUF summary…",
+    71→  "Validating evidence chain…",
+    72→];
+    73→
+    74→const STATUSES: IncidentStatus[] = ["Open", "Investigating", "Contained", "Resolved"];
+    75→
+    76→// ------------------------------------------------------------------
+    77→// Left pane — ranked incident list
+    78→// ----------------------------------------------------------------------
+    79→
+    80→function IncidentList({
+    81→  incidents,
+    82→  selectedId,
+    83→  onSelect,
+    84→}: {
+    85→  incidents: IncidentDTO[];
+    86→  selectedId: string | null;
+    87→  onSelect: (id: string) => void;
+    88→}) {
+    89→  return (
+    90→    <nav
+    91→      aria-label="Incident list"
+    92→      className="soc-scroll flex gap-2 overflow-x-auto pb-1 lg:max-h-[calc(100vh-15rem)] lg:w-80 lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:pb-0"
+    93→    >
+    94→      {incidents.map((inc) => {
+    95→        const sev = severityStyle(inc.severity);
+    96→        const selected = inc.id === selectedId;
+    97→        return (
+    98→          <button
+    99→            key={inc.id}
+   100→            type="button"
+   101→            onClick={() => onSelect(inc.id)}
+   102→            aria-current={selected ? "true" : undefined}
+   103→            className={cn(
+   104→              "group flex min-h-16 w-64 shrink-0 items-center gap-3 rounded-xl border p-3 text-left transition-colors lg:w-full",
+   105→              selected
+   106→                ? "border-emerald-500/50 bg-emerald-500/10"
+   107→                : "border-border bg-card/60 hover:border-emerald-500/30 hover:bg-card"
+   108→            )}
+   109→          >
+   110→            <span className="relative flex size-2.5 shrink-0" aria-hidden="true">
+   111→              {inc.severity === "Critical" && (
+   112→                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-60" />
+   113→              )}
+   114→              <span className={cn("relative inline-flex size-2.5 rounded-full", sev.dot)} />
+   115→            </span>
+   116→            <span className="min-w-0 flex-1">
+   117→              <span className="flex items-center gap-2">
+   118→                <span className="font-mono text-xs font-semibold text-emerald-300/90">{inc.incidentId}</span>
+   119→                <span className={cn("ml-auto font-mono text-xs font-bold tabular-nums", scoreTextClass(inc.threatScore))}>
+   120→                  {inc.threatScore}
+   121→                </span>
+   122→              </span>
+   123→              <span className="mt-0.5 block truncate text-xs text-foreground/85" title={inc.title}>
+   124→                {inc.title}
+   125→              </span>
+   126→            </span>
+   127→          </button>
+   128→        );
+   129→      })}
+   130→    </nav>
+   131→  );
+   132→}
+   133→
+   134→function IncidentListSkeleton() {
+   135→  return (
+   136→    <div className="flex w-full flex-col gap-2 lg:w-80 lg:shrink-0" aria-busy="true">
+   137→      {Array.from({ length: 5 }).map((_, i) => (
+   138→        <Skeleton key={i} className="h-16 rounded-xl" />
+   139→      ))}
+   140→    </div>
+   141→  );
+   142→}
+   143→
+   144→// ------------------------------------------------------------------
+   145→// Score panel
+   146→// ----------------------------------------------------------------------
+   147→
+   148→function ScorePanel({ incident }: { incident: IncidentDetailDTO }) {
+   149→  return (
+   150→    <Card className="rounded-xl">
+   151→      <CardHeader className="pb-2">
+   152→        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+   153→          <Target className="size-4 text-emerald-400" aria-hidden="true" />
+   154→          Threat Score
+   155→        </CardTitle>
+   156→      </CardHeader>
+   157→      <CardContent className="flex flex-col items-center gap-5 sm:flex-row sm:items-start">
+   158→        <ScoreGauge score={incident.threatScore} />
+   159→        <div className="min-w-0 flex-1 space-y-4">
+   160→          <div>
+   161→            <div className="mb-1 flex items-center justify-between text-xs">
+   162→              <span className="uppercase tracking-wider text-muted-foreground">Confidence</span>
+   163→              <span className="font-mono font-semibold tabular-nums text-foreground/90">
+   164→                {incident.confidence}%
+   165→              </span>
+   166→            </div>
+   167→            <div className="h-1.5 overflow-hidden rounded-full bg-white/8">
+   168→              <motion.div
+   169→                className="h-full rounded-full bg-emerald-400"
+   170→                initial={{ width: 0 }}
+   171→                animate={{ width: `${incident.confidence}%` }}
+   172→                transition={{ duration: 0.8, ease: "easeOut" }}
+   173→              />
+   174→            </div>
+   175→          </div>
+   176→          <div>
+   177→            <p className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+   178→              Risk signals
+   179→            </p>
+   180→            {incident.riskSignals.length === 0 ? (
+   181→              <p className="text-xs text-muted-foreground">No deterministic risk signals recorded.</p>
+   182→            ) : (
+   183→              <ul className="flex flex-wrap gap-1.5">
+   184→                {incident.riskSignals.map((rs, i) => (
+   185→                  <li
+   186→                    key={`${rs.signal}-${i}`}
+   187→                    className={cn(
+   188→                      "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
+   189→                      rs.points >= 15
+   190→                        ? "border-red-500/30 bg-red-500/10 text-red-300"
+   191→                        : rs.points >= 8
+   192→                          ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+   193→                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+   194→                    )}
+   195→                  >
+   196→                    <span className="font-mono font-bold tabular-nums">+{rs.points}</span>
+   197→                    {rs.signal}
+   198→                  </li>
+   199→                ))}
+   200→              </ul>
+   201→            )}
+   202→          </div>
+   203→        </div>
+   204→      </CardContent>
+   205→    </Card>
+   206→  );
+   207→}
+   208→
+   209→// ------------------------------------------------------------------
+   210→// Attack timeline
+   211→// ----------------------------------------------------------------------
+   212→
+   213→function AttackTimeline({ incident }: { incident: IncidentDetailDTO }) {
+   214→  const alerts = incident.alerts ?? [];
+   215→  return (
+   216→    <Card className="rounded-xl">
+   217→      <CardHeader className="pb-3">
+   218→        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+   219→          <Radar className="size-4 text-emerald-400" aria-hidden="true" />
+   220→          Attack Timeline
+   221→        </CardTitle>
+   222→        <CardDescription className="text-xs">
+   223→          {alerts.length} correlated alert{alerts.length === 1 ? "" : "s"}, chronological
+   224→        </CardDescription>
+   225→      </CardHeader>
+   226→      <CardContent>
+   227→        {alerts.length === 0 ? (
+   228→          <p className="py-4 text-sm text-muted-foreground">No correlated alerts on record.</p>
+   229→        ) : (
+   230→          <ol className="soc-scroll relative max-h-96 space-y-5 overflow-y-auto border-l border-white/10 ml-3 pl-6 pr-2">
+   231→            {alerts.map((a) => {
+   232→              const sev = severityStyle(rawSeverityLabel(a.rawSeverity));
+   233→              return (
+   234→                <li key={a.id} className="relative">
+   235→                  <span
+   236→                    className={cn(
+   237→                      "absolute -left-[29px] top-1.5 size-2.5 rounded-full ring-4 ring-background",
+   238→                      sev.dot
+   239→                    )}
+   240→                    aria-hidden="true"
+   241→                  />
+   242→                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+   243→                    <span className="font-mono text-xs text-muted-foreground" title={formatDateTime(a.timestamp)}>
+   244→                      {formatDateTime(a.timestamp)}
+   245→                      <span className="ml-2 text-[10px] text-muted-foreground/70">{timeAgo(a.timestamp)}</span>
+   246→                    </span>
+   247→                    <SourceChip source={a.source} sourceLabel={a.sourceLabel} />
+   248→                    <EventChip event={a.event} />
+   249→                  </div>
+   250→                  <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">{a.description}</p>
+   251→                  <p className="mt-1 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted-foreground">
+   252→                    {a.user && <span>user: {a.user}</span>}
+   253→                    {a.device && <span>device: {a.device}</span>}
+   254→                    {a.ip && <span>ip: {a.ip}</span>}
+   255→                    <span className="text-emerald-400/70">id: {a.alertId}</span>
+   256→                  </p>
+   257→                </li>
+   258→              );
+   259→            })}
+   260→          </ol>
+   261→        )}
+   262→      </CardContent>
+   263→    </Card>
+   264→  );
+   265→}
+   266→
+   267→// ------------------------------------------------------------------
+   268→// MITRE mapping
+   269→// ----------------------------------------------------------------------
+   270→
+   271→function MitrePanel({ incident }: { incident: IncidentDetailDTO }) {
+   272→  const techniques = incident.mitre ?? [];
+   273→  return (
+   274→    <Card className="rounded-xl">
+   275→      <CardHeader className="pb-3">
+   276→        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+   277→          <Crosshair className="size-4 text-emerald-400" aria-hidden="true" />
+   278→          MITRE ATT&amp;CK Mapping
+   279→        </CardTitle>
+   280→      </CardHeader>
+   281→      <CardContent>
+   282→        {techniques.length === 0 ? (
+   283→          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+   284→            <Sparkles className="size-3.5 text-amber-400" aria-hidden="true" />
+   285→            No techniques mapped yet — run AI analysis.
+   286→          </p>
+   287→        ) : (
+   288→          <ul className="flex flex-wrap gap-2">
+   289→            {techniques.map((t) => (
+   290→              <li
+   291→                key={t.id}
+   292→                title={`${t.id} — ${t.name} (${t.tactic})`}
+   293→                className="rounded-lg border border-border bg-muted/50 px-2.5 py-1.5"
+   294→              >
+   295→                <span className="block font-mono text-xs font-semibold text-emerald-300/90">
+   296→                  {t.id} · {t.name}
+   297→                </span>
+   298→                <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+   299→                  {t.tactic}
+   300→                </span>
+   301→              </li>
+   302→            ))}
+   303→          </ul>
+   304→        )}
+   305→      </CardContent>
+   306→    </Card>
+   307→  );
+   308→}
+   309→
+   310→// ------------------------------------------------------------------
+   311→// BLUF report
+   312→// ----------------------------------------------------------------------
+   313→
+   314→/** Build the full plain-text incident report for download/export. */
+   315→function buildReportText(incident: IncidentDetailDTO): string {
+   316→  const rule = "-".repeat(72);
+   317→  const lines: string[] = [];
+   318→  lines.push("=".repeat(72));
+   319→  lines.push(`SENTINELAI INCIDENT REPORT — ${incident.incidentId}`);
+   320→  lines.push("=".repeat(72));
+   321→  lines.push(`Title          : ${incident.title}`);
+   322→  lines.push(`Severity       : ${incident.severity}`);
+   323→  lines.push(`Classification : ${incident.classification}`);
+   324→  lines.push(`Threat Score   : ${incident.threatScore}/100`);
+   325→  lines.push(`Confidence     : ${incident.confidence}%`);
+   326→  lines.push(`Status         : ${incident.status}`);
+   327→  lines.push(`Related Alerts : ${incident.alertCount} (${incident.sources.join(", ")})`);
+   328→  lines.push(`Generated      : ${new Date().toISOString()}`);
+   329→  lines.push("");
+   330→  lines.push(rule);
+   331→  lines.push("MITRE ATT&CK MAPPING");
+   332→  lines.push(rule);
+   333→  if (incident.mitre.length === 0) lines.push("(none mapped)");
+   334→  for (const t of incident.mitre) lines.push(`  ${t.id}  ${t.name} [${t.tactic}]`);
+   335→  lines.push("");
+   336→  lines.push(rule);
+   337→  lines.push("RISK SIGNALS");
+   338→  lines.push(rule);
+   339→  if (incident.riskSignals.length === 0) lines.push("(none)");
+   340→  for (const r of incident.riskSignals) lines.push(`  +${r.points}  ${r.signal}`);
+   341→  lines.push("");
+   342→  lines.push(rule);
+   343→  lines.push("BLUF — BOTTOM LINE UP FRONT");
+   344→  lines.push(rule);
+   345→  lines.push(incident.bluf ?? "");
+   346→  if (incident.explanation) {
+   347→    lines.push("");
+   348→    lines.push(rule);
+   349→    lines.push("ANALYST EXPLANATION");
+   350→    lines.push(rule);
+   351→    lines.push(incident.explanation);
+   352→  }
+   353→  if (incident.recommendedActions.length > 0) {
+   354→    lines.push("");
+   355→    lines.push(rule);
+   356→    lines.push("RECOMMENDED ACTIONS");
+   357→    lines.push(rule);
+   358→    incident.recommendedActions.forEach((a, i) => lines.push(`  ${i + 1}. ${a}`));
+   359→  }
+   360→  if (incident.evidence.length > 0) {
+   361→    lines.push("");
+   362→    lines.push(rule);
+   363→    lines.push("KEY EVIDENCE");
+   364→    lines.push(rule);
+   365→    for (const e of incident.evidence) lines.push(`  - ${e}`);
+   366→  }
+   367→  lines.push("");
+   368→  lines.push(rule);
+   369→  lines.push("RELATED ALERT TIMELINE");
+   370→  lines.push(rule);
+   371→  for (const a of incident.alerts) {
+   372→    lines.push(`  ${a.timestamp}  [${a.sourceLabel}]  ${a.event}  (${a.alertId})`);
+   373→    lines.push(`    ${a.description}`);
+   374→  }
+   375→  lines.push("");
+   376→  lines.push("SentinelAI — simulated demo data, not for operational use.");
+   377→  return lines.join("\n");
+   378→}
+   379→
+   380→function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
+   381→  const [copied, setCopied] = useState(false);
+   382→  if (!incident.bluf) return null;
+   383→
+   384→  const copyBluf = async () => {
+   385→    try {
+   386→      await navigator.clipboard.writeText(incident.bluf ?? "");
+   387→      setCopied(true);
+   388→      toast.success("BLUF summary copied to clipboard");
+   389→      setTimeout(() => setCopied(false), 2000);
+   390→    } catch {
+   391→      toast.error("Clipboard unavailable in this browser");
+   392→    }
+   393→  };
+   394→
+   395→  const downloadReport = () => {
+   396→    const blob = new Blob([buildReportText(incident)], { type: "text/plain;charset=utf-8" });
+   397→    const url = URL.createObjectURL(blob);
+   398→    const a = document.createElement("a");
+   399→    a.href = url;
+   400→    a.download = `SentinelAI-report-${incident.incidentId}.txt`;
+   401→    document.body.appendChild(a);
+   402→    a.click();
+   403→    a.remove();
+   404→    URL.revokeObjectURL(url);
+   405→    toast.success(`Full report downloaded (${incident.incidentId})`);
+   406→  };
+   407→
+   408→  return (
+   409→    <motion.div
+   410→      initial={{ opacity: 0, y: 10 }}
+   411→      animate={{ opacity: 1, y: 0 }}
+   412→      transition={{ duration: 0.4 }}
+   413→    >
+   414→      <Card className="overflow-hidden rounded-xl border-emerald-500/25 p-0">
+   415→        <div className="flex flex-wrap items-center gap-2 border-b border-emerald-500/25 bg-emerald-500/10 px-4 py-2.5">
+   416→          <FileText className="size-4 text-emerald-400" aria-hidden="true" />
+   417→          <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-emerald-300">
+   418→            BLUF — Bottom Line Up Front
+   419→          </span>
+   420→          {incident.analyzed ? (
+   421→            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
+   422→              <Sparkles className="size-3" aria-hidden="true" /> AI Analyst Report
+   423→            </span>
+   424→          ) : (
+   425→            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
+   426→              <ShieldAlert className="size-3" aria-hidden="true" /> Deterministic Baseline
+   427→            </span>
+   428→          )}
+   429→          <span className="ml-auto flex items-center gap-1.5">
+   430→            <Button
+   431→              type="button"
+   432→              size="sm"
+   433→              variant="outline"
+   434→              onClick={() => void copyBluf()}
+   435→              className="min-h-8 gap-1.5 border-emerald-500/40 bg-transparent px-2.5 font-mono text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
+   436→              aria-label="Copy BLUF summary to clipboard"
+   437→            >
+   438→              {copied ? <CheckCircle2 className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+   439→              {copied ? "Copied" : "Copy BLUF"}
+   440→            </Button>
+   441→            <Button
+   442→              type="button"
+   443→              size="sm"
+   444→              variant="outline"
+   445→              onClick={downloadReport}
+   446→              className="min-h-8 gap-1.5 border-emerald-500/40 bg-transparent px-2.5 font-mono text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
+   447→              aria-label="Download full incident report as text file"
+   448→            >
+   449→              <Download className="size-3.5" aria-hidden="true" />
+   450→              Report .txt
+   451→            </Button>
+   452→          </span>
+   453→        </div>
+   454→        <CardContent className="space-y-5 p-4 sm:p-6">
+   455→          <p className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground/90">
+   456→            {incident.bluf}
+   457→          </p>
+   458→
+   459→          {incident.recommendedActions.length > 0 && (
+   460→            <div>
+   461→              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+   462→                Recommended Actions
+   463→              </p>
+   464→              <ol className="space-y-2">
+   465→                {incident.recommendedActions.map((action, i) => (
+   466→                  <li key={i} className="flex items-start gap-2.5 text-sm">
+   467→                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border border-emerald-500/40 bg-emerald-500/10 font-mono text-[10px] font-bold text-emerald-300">
+   468→                      {i + 1}
+   469→                    </span>
+   470→                    <span className="leading-relaxed text-foreground/90">{action}</span>
+   471→                  </li>
+   472→                ))}
+   473→              </ol>
+   474→            </div>
+   475→          )}
+   476→
+   477→          {incident.evidence.length > 0 && (
+   478→            <div>
+   479→              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+   480→                Evidence
+   481→              </p>
+   482→              <ul className="space-y-1.5">
+   483→                {incident.evidence.map((ev, i) => (
+   484→                  <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
+   485→                    <Crosshair className="mt-0.5 size-3 shrink-0 text-emerald-500/70" aria-hidden="true" />
+   486→                    <span>{ev}</span>
+   487→                  </li>
+   488→                ))}
+   489→              </ul>
+   490→            </div>
+   491→          )}
+   492→        </CardContent>
+   493→      </Card>
+   494→    </motion.div>
+   495→  );
+   496→}
+   497→
+   498→// ------------------------------------------------------------------
+   499→// Detail pane
+   500→// ----------------------------------------------------------------------
+   501→
+   502→function DetailPane({ incidentId }: { incidentId: string }) {
+   503→  const queryClient = useQueryClient();
+   504→
+   505→  const detailQuery = useQuery({
+   506→    queryKey: ["incident", incidentId],
+   507→    queryFn: async () => {
+   508→      const d = await apiGet<{ incident: IncidentDetailDTO }>(`/api/incidents/${incidentId}`);
+   509→      return d.incident;
+   510→    },
+   511→    enabled: Boolean(incidentId),
+   512→  });
+   513→
+   514→  const [analyzeLine, setAnalyzeLine] = useState(0);
+   515→  const analyzeMutation = useMutation({
+   516→    mutationFn: () => apiSend(`/api/incidents/${incidentId}/analyze`, "POST"),
+   517→    onSuccess: (data: unknown) => {
+   518→      let msg = "AI analysis complete — BLUF report ready.";
+   519→      if (data && typeof data === "object" && "message" in data) {
+   520→        const m = (data as { message: unknown }).message;
+   521→        if (typeof m === "string") msg = m;
+   522→      }
+   523→      toast.success("Analysis complete", { description: msg });
+   524→      queryClient.invalidateQueries({ queryKey: ["incident", incidentId] });
+   525→      queryClient.invalidateQueries({ queryKey: ["incidents"] });
+   526→      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+   527→    },
+   528→    onError: (err: Error) => {
+   529→      toast.error("AI analysis failed", { description: err.message });
+   530→    },
+   531→  });
+   532→
+   533→  useEffect(() => {
+   534→    if (!analyzeMutation.isPending) return;
+   535→    const t = setInterval(
+   536→      () => setAnalyzeLine((i) => (i + 1) % ANALYZE_LINES.length),
+   537→      2500
+   538→    );
+   539→    return () => clearInterval(t);
+   540→  }, [analyzeMutation.isPending]);
+   541→
+   542→  const updateMutation = useMutation({
+   543→    mutationFn: (payload: IncidentUpdatePayload) =>
+   544→      apiSend<unknown>(`/api/incidents/${incidentId}`, "PATCH", payload),
+   545→    onSuccess: (_data, variables) => {
+   546→      const what = variables.status
+   547→        ? `Status set to ${variables.status}`
+   548→        : variables.classification
+   549→          ? `Classification set to ${variables.classification}`
+   550→          : "Incident updated";
+   551→      toast.success(what, { description: "Analyst feedback recorded." });
+   552→      queryClient.invalidateQueries({ queryKey: ["incident", incidentId] });
+   553→      queryClient.invalidateQueries({ queryKey: ["incidents"] });
+   554→      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+   555→    },
+   556→    onError: (err: Error) => {
+   557→      toast.error("Update failed", { description: err.message });
+   558→    },
+   559→  });
+   560→
+   561→  if (detailQuery.isLoading) {
+   562→    return (
+   563→      <div className="flex flex-col gap-4 sm:gap-6" aria-busy="true" aria-label="Loading incident detail">
+   564→        <Skeleton className="h-36 rounded-xl" />
+   565→        <Skeleton className="h-52 rounded-xl" />
+   566→        <Skeleton className="h-64 rounded-xl" />
+   567→      </div>
+   568→    );
+   569→  }
+   570→  if (detailQuery.isError) {
+   571→    return (
+   572→      <ErrorState
+   573→        message={detailQuery.error instanceof Error ? detailQuery.error.message : undefined}
+   574→        onRetry={() => detailQuery.refetch()}
+   575→      />
+   576→    );
+   577→  }
+   578→  const incident = detailQuery.data;
+   579→  if (!incident) return null;
+   580→
+   581→  return (
+   582→    <div className="flex min-w-0 flex-col gap-4 sm:gap-6">
+   583→      {/* Header */}
+   584→      <motion.div
+   585→        key={incident.id}
+   586→        initial={{ opacity: 0, y: 10 }}
+   587→        animate={{ opacity: 1, y: 0 }}
+   588→        transition={{ duration: 0.35 }}
+   589→      >
+   590→        <Card className="rounded-xl p-4 sm:p-6">
+   591→          <div className="flex flex-col gap-4">
+   592→            <div className="flex flex-wrap items-center gap-2">
+   593→              <SeverityBadge severity={incident.severity} />
+   594→              <ClassificationBadge classification={incident.classification} />
+   595→              <StatusBadge status={incident.status} />
+   596→              <span className="ml-auto font-mono text-sm font-bold text-emerald-300/90">
+   597→                {incident.incidentId}
+   598→              </span>
+   599→            </div>
+   600→            <div>
+   601→              <h2 className="text-lg font-bold leading-snug tracking-tight sm:text-xl">
+   602→                {incident.title}
+   603→              </h2>
+   604→              <p className="mt-1 text-xs text-muted-foreground">
+   605→                {incident.alertCount} related alert{incident.alertCount === 1 ? "" : "s"}
+   606→                {" · "}
+   607→                {incident.sources.join(", ") || "single source"}
+   608→                {" · "}
+   609→                created {timeAgo(incident.createdAt)}
+   610→              </p>
+   611→            </div>
+   612→
+   613→            {/* Actions */}
+   614→            <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">
+   615→              <Button
+   616→                type="button"
+   617→                onClick={() => {
+   618→                  setAnalyzeLine(0);
+   619→                  analyzeMutation.mutate();
+   620→                }}
+   621→                disabled={analyzeMutation.isPending}
+   622→                className="min-h-11 gap-2 border-emerald-500/50 bg-emerald-500/15 font-semibold text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+   623→                aria-label="Run AI analysis on this incident"
+   624→              >
+   625→                {analyzeMutation.isPending ? (
+   626→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   627→                ) : (
+   628→                  <Sparkles className="size-4" aria-hidden="true" />
+   629→                )}
+   630→                {analyzeMutation.isPending ? (
+   631→                  <span className="font-mono text-xs">{ANALYZE_LINES[analyzeLine]}</span>
+   632→                ) : (
+   633→                  "Run AI Analysis"
+   634→                )}
+   635→              </Button>
+   636→
+   637→              <div className="flex items-center gap-2">
+   638→                <label htmlFor="workflow-status" className="sr-only">Incident status</label>
+   639→                <Select
+   640→                  value={incident.status}
+   641→                  onValueChange={(v) =>
+   642→                    updateMutation.mutate({ status: v as IncidentStatus })
+   643→                  }
+   644→                  disabled={updateMutation.isPending}
+   645→                >
+   646→                  <SelectTrigger id="workflow-status" className="min-h-11 w-40" aria-label="Set incident status">
+   647→                    <SelectValue placeholder="Status" />
+   648→                  </SelectTrigger>
+   649→                  <SelectContent>
+   650→                    {STATUSES.map((s) => (
+   651→                      <SelectItem key={s} value={s}>
+   652→                        {s}
+   653→                      </SelectItem>
+   654→                    ))}
+   655→                  </SelectContent>
+   656→                </Select>
+   657→              </div>
+   658→
+   659→              <div className="ml-auto flex items-center gap-1.5">
+   660→                <Button
+   661→                  type="button"
+   662→                  variant="outline"
+   663→                  size="sm"
+   664→                  className="min-h-11 gap-1.5 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+   665→                  disabled={updateMutation.isPending}
+   666→                  onClick={() =>
+   667→                    updateMutation.mutate({ classification: "Genuine Threat" as Classification })
+   668→                  }
+   669→                  aria-label="Confirm this incident as a genuine threat"
+   670→                >
+   671→                  <ThumbsUp className="size-3.5" aria-hidden="true" />
+   672→                  Confirm Threat
+   673→                </Button>
+   674→                <Button
+   675→                  type="button"
+   676→                  variant="outline"
+   677→                  size="sm"
+   678→                  className="min-h-11 gap-1.5 border-slate-500/40 text-slate-300 hover:bg-slate-500/10 hover:text-slate-200"
+   679→                  disabled={updateMutation.isPending}
+   680→                  onClick={() =>
+   681→                    updateMutation.mutate({ classification: "False Positive" as Classification })
+   682→                  }
+   683→                  aria-label="Mark this incident as a false positive"
+   684→                >
+   685→                  <ThumbsDown className="size-3.5" aria-hidden="true" />
+   686→                  Mark False Positive
+   687→                </Button>
+   688→                <Button
+   689→                  type="button"
+   690→                  variant="ghost"
+   691→                  size="icon"
+   692→                  className="size-11 shrink-0 text-muted-foreground"
+   693→                  aria-label="Dismiss feedback (no-op in demo)"
+   694→                  title="Dismiss — no-op in this demo"
+   695→                >
+   696→                  <X className="size-4" aria-hidden="true" />
+   697→                </Button>
+   698→              </div>
+   699→            </div>
+   700→          </div>
+   701→        </Card>
+   702→      </motion.div>
+   703→
+   704→      {/* Unanalyzed ribbon */}
+   705→      {!incident.analyzed && (
+   706→        <div
+   707→          role="status"
+   708→          className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300"
+   709→        >
+   710→          <Sparkles className="size-4 shrink-0" aria-hidden="true" />
+   711→          Deterministic scoring only — run AI Analysis for the full LLM investigation report.
+   712→        </div>
+   713→      )}
+   714→
+   715→      <ScorePanel incident={incident} />
+   716→
+   717→      <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
+   718→        <AttackTimeline incident={incident} />
+   719→        <div className="flex flex-col gap-4 sm:gap-6">
+   720→          <MitrePanel incident={incident} />
+   721→          {incident.explanation && (
+   722→            <Card className="rounded-xl">
+   723→              <CardHeader className="pb-3">
+   724→                <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+   725→                  <ShieldCheck className="size-4 text-emerald-400" aria-hidden="true" />
+   726→                  Analyst Explanation
+   727→                </CardTitle>
+   728→              </CardHeader>
+   729→              <CardContent>
+   730→                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
+   731→                  {incident.explanation}
+   732→                </p>
+   733→              </CardContent>
+   734→            </Card>
+   735→          )}
+   736→        </div>
+   737→      </div>
+   738→
+   739→      <BlufReport incident={incident} />
+   740→    </div>
+   741→  );
+   742→}
+   743→
+   744→// ------------------------------------------------------------------
+   745→// Tab root
+   746→// ----------------------------------------------------------------------
+   747→
+   748→export function IncidentAnalysis() {
+   749→  const selectedId = useSocStore((s) => s.selectedIncidentId);
+   750→  const selectIncident = useSocStore((s) => s.selectIncident);
+   751→
+   752→  const listQuery = useQuery({
+   753→    queryKey: ["incidents"],
+   754→    queryFn: () => apiGet<unknown>("/api/incidents"),
+   755→    select: (d: unknown) => unwrapList<IncidentDTO>(d, "incidents"),
+   756→  });
+   757→
+   758→  const incidents = listQuery.data ?? [];
+   759→  const activeId =
+   760→    selectedId && incidents.some((i) => i.id === selectedId)
+   761→      ? selectedId
+   762→      : (incidents[0]?.id ?? null);
+   763→
+   764→  if (listQuery.isLoading) {
+   765→    return (
+   766→      <div className="flex flex-col gap-6 lg:flex-row" aria-busy="true">
+   767→        <IncidentListSkeleton />
+   768→        <div className="hidden min-w-0 flex-1 flex-col gap-4 lg:flex">
+   769→          <Skeleton className="h-36 rounded-xl" />
+   770→          <Skeleton className="h-52 rounded-xl" />
+   771→        </div>
+   772→      </div>
+   773→    );
+   774→  }
+   775→  if (listQuery.isError) {
+   776→    return (
+   777→      <ErrorState
+   778→        message={listQuery.error instanceof Error ? listQuery.error.message : undefined}
+   779→        onRetry={() => listQuery.refetch()}
+   780→      />
+   781→    );
+   782→  }
+   783→  if (incidents.length === 0 || !activeId) {
+   784→    return (
+   785→      <div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-card/50 py-16 text-center">
+   786→        <CheckCircle2 className="size-8 text-emerald-400/70" aria-hidden="true" />
+   787→        <p className="text-sm font-medium">No incidents yet</p>
+   788→        <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+   789→          Once alerts are ingested, SentinelAI correlates them into incidents and ranks
+   790→          them here. Load the demo dataset or import a raw feed to get started.
+   791→        </p>
+   792→      </div>
+   793→    );
+   794→  }
+   795→
+   796→  return (
+   797→    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
+   798→      <IncidentList
+   799→        incidents={incidents}
+   800→        selectedId={activeId}
+   801→        onSelect={selectIncident}
+   802→      />
+   803→      <div className="min-w-0 flex-1">
+   804→        <DetailPane incidentId={activeId} />
+   805→      </div>
+   806→    </div>
+   807→  );
+   808→}
+   809→

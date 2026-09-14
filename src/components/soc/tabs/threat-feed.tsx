@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import {
   Download,
+  FileUp,
+  Paperclip,
   RotateCw,
   Search,
   Upload,
+  X,
 } from "lucide-react";
 import {
   Card,
@@ -55,6 +58,7 @@ import type {
   IncidentDTO,
 } from "@/lib/types";
 import { formatDateTime, timeAgo, unwrapList } from "@/lib/ui-helpers";
+import { cn } from "@/lib/utils";
 import { useSocStore } from "@/store/soc-store";
 
 type CorrelatedFilter = "all" | "correlated";
@@ -87,9 +91,22 @@ function buildAlertsUrl(filters: FeedFilters): string {
 // Import panel
 // ----------------------------------------------------------------------
 
+const MAX_IMPORT_BYTES = 2 * 1024 * 1024; // 2 MB guard rail
+
+function guessFormatFromName(name: string): NonNullable<ImportPayload["format"]> | null {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  if (ext === "json") return "json";
+  if (ext === "csv" || ext === "tsv") return "csv";
+  if (ext === "txt" || ext === "log" || ext === "text") return "text";
+  return null;
+}
+
 function ImportPanel() {
   const [raw, setRaw] = useState("");
   const [format, setFormat] = useState<NonNullable<ImportPayload["format"]>>("auto");
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
@@ -101,11 +118,41 @@ function ImportPanel() {
         description: data.message || undefined,
       });
       setRaw("");
+      setFileName(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     },
     onError: (err: Error) => {
       toast.error("Import failed", { description: err.message });
     },
   });
+
+  const importPayload = (text: string, fmt: NonNullable<ImportPayload["format"]>) =>
+    mutation.mutate({ raw: text, format: fmt });
+
+  const loadFile = async (file: File) => {
+    if (file.size > MAX_IMPORT_BYTES) {
+      toast.error("File too large", { description: `${file.name} exceeds the 2 MB import limit.` });
+      return;
+    }
+    try {
+      const text = await file.text();
+      setRaw(text);
+      setFileName(file.name);
+      const guessed = guessFormatFromName(file.name);
+      if (guessed) setFormat(guessed);
+      toast.success(`Loaded ${file.name}`, {
+        description: `${(file.size / 1024).toFixed(1)} KB${guessed ? ` · format set to ${guessed.toUpperCase()}` : " · auto-detect will be used"}`,
+      });
+    } catch {
+      toast.error("Could not read file", { description: file.name });
+    }
+  };
+
+  const clearFile = () => {
+    setRaw("");
+    setFileName(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   return (
     <Card className="rounded-xl border-dashed">
@@ -115,13 +162,50 @@ function ImportPanel() {
           Import Raw Feed
         </CardTitle>
         <CardDescription className="text-xs">
-          Paste a raw JSON array, CSV export, or free-text sensor log. The normalizer
-          auto-detects the schema and ingests each record.
+          Upload a file (CSV, JSON or text log), drag &amp; drop it below, or paste a raw feed. The
+          normalizer auto-detects the schema and ingests each record.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="flex-1">
+        {/* hidden file input + picker row */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.tsv,.json,.txt,.log,text/csv,application/json,text/plain"
+          className="sr-only"
+          aria-label="Choose a feed file to import"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void loadFile(f);
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="min-h-9 gap-2 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Choose feed file"
+          >
+            <FileUp className="size-3.5" aria-hidden="true" />
+            Choose file
+          </Button>
+          {fileName && (
+            <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted/50 px-2.5 py-1.5 font-mono text-[11px] text-foreground/85">
+              <Paperclip className="size-3 shrink-0 text-emerald-400" aria-hidden="true" />
+              <span className="max-w-48 truncate">{fileName}</span>
+              <button
+                type="button"
+                onClick={clearFile}
+                className="ml-0.5 rounded p-0.5 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                aria-label={`Remove file ${fileName}`}
+              >
+                <X className="size-3" aria-hidden="true" />
+              </button>
+            </span>
+          )}
+          <div className="ml-auto">
             <Label htmlFor="import-format" className="sr-only">
               Feed format
             </Label>
@@ -141,14 +225,38 @@ function ImportPanel() {
             </Select>
           </div>
         </div>
-        <div>
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            const f = e.dataTransfer.files?.[0];
+            if (f) void loadFile(f);
+          }}
+          className={cn(
+            "relative rounded-lg border border-dashed transition-colors",
+            dragOver ? "border-emerald-400 bg-emerald-500/10" : "border-transparent"
+          )}
+        >
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-background/70 font-mono text-xs font-semibold uppercase tracking-widest text-emerald-300">
+              Drop file to load
+            </div>
+          )}
           <Label htmlFor="import-raw" className="sr-only">
             Raw feed content
           </Label>
           <textarea
             id="import-raw"
             value={raw}
-            onChange={(e) => setRaw(e.target.value)}
+            onChange={(e) => {
+              setRaw(e.target.value);
+              setFileName(null);
+            }}
             rows={5}
             placeholder={`{"alert_id":"A9999","source":"siem","timestamp":"...","user":"jdoe",...}\nalert_id,source,timestamp,user,device,ip,event,description,severity\n[SATCOM-7] 2025-01-01T00:00Z SEV:info GROUND-STATION-2 :: ...`}
             className="soc-scroll w-full resize-y rounded-lg border border-input bg-background/60 px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -165,7 +273,7 @@ function ImportPanel() {
             type="button"
             size="sm"
             disabled={mutation.isPending || raw.trim().length === 0}
-            onClick={() => mutation.mutate({ raw, format })}
+            onClick={() => importPayload(raw, format)}
             className="min-h-9 gap-2 border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
             aria-label="Import pasted feed"
           >

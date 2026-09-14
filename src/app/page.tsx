@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { LayoutDashboard, Radio, Crosshair, Bot } from "lucide-react";
+import { LayoutDashboard, Radio, Crosshair, Bot, Waypoints } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SocHeader } from "@/components/soc/header";
 import { SocFooter } from "@/components/soc/footer";
 import { CommandCenter } from "@/components/soc/tabs/command-center";
 import { ThreatFeed } from "@/components/soc/tabs/threat-feed";
+import { ThreatGraph } from "@/components/soc/tabs/threat-graph";
 import { IncidentAnalysis } from "@/components/soc/tabs/incident-analysis";
 import { AiCopilot } from "@/components/soc/tabs/ai-copilot";
 import { useSocStore, type SocTab } from "@/store/soc-store";
@@ -19,11 +20,12 @@ const TAB_ITEMS: {
 }[] = [
   { value: "command", label: "Command Center", icon: LayoutDashboard },
   { value: "feed", label: "Threat Feed", icon: Radio },
+  { value: "graph", label: "Threat Graph", icon: Waypoints },
   { value: "analysis", label: "Incident Analysis", icon: Crosshair },
   { value: "copilot", label: "AI Copilot", icon: Bot },
 ];
 
-const TAB_ORDER: SocTab[] = ["command", "feed", "analysis", "copilot"];
+const TAB_ORDER: SocTab[] = ["command", "feed", "graph", "analysis", "copilot"];
 
 export default function Page() {
   const activeTab = useSocStore((s) => s.activeTab);
@@ -38,7 +40,7 @@ export default function Page() {
         const tag = target.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
       }
-      const idx = ["1", "2", "3", "4"].indexOf(e.key);
+      const idx = ["1", "2", "3", "4", "5"].indexOf(e.key);
       if (idx !== -1) setActiveTab(TAB_ORDER[idx]);
     };
     window.addEventListener("keydown", onKey);
@@ -85,6 +87,9 @@ export default function Page() {
           </TabsContent>
           <TabsContent value="feed">
             <ThreatFeed />
+          </TabsContent>
+          <TabsContent value="graph">
+            <ThreatGraph />
           </TabsContent>
           <TabsContent value="analysis">
             <IncidentAnalysis />

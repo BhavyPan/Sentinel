@@ -144,3 +144,35 @@ Stage Summary:
 - All spec MUST-have acceptance criteria now incl. BLUF export; 2 of 4 §15 nice-to-haves done (live simulation, report download).
 - Remaining nice-to-haves for next round: CSV file upload (paste works today), entity/attack-chain graph view, PDF report export, animated threat-landing page details.
 - Risks: none known; simulator is demo-only (write path guarded by explicit toggle; no auth model in MVP).
+---
+Task ID: r3 (webDevReview round 3)
+Agent: Z.ai Code (main)
+Task: Scheduled review — QA sweep, then new features: Threat Graph view (5th tab), file upload import, analyst notes, incidents CSV export + styling polish
+
+Work Log:
+- STATUS: dev server healthy (200), DB intact (38 alerts / 8 incidents / INC-1001 analyzed). QA sweep at 1440x900 + 375x812 found only minor styling issues (KPI sub-label truncation at desktop, "Investigating" badge clipping in incident table, mobile brand truncation) — all fixed this round. No console errors, lint + tsc clean throughout.
+- BUGFIX/STYLE 1 (command-center.tsx): KpiCard restructured — label+icon row on top, big number and sub-label now span full card width below. Desktop truncation ("30 corr…", "5 genui…", "3 low s…") eliminated; verified all six sub-labels fully visible at 1440px and 375px.
+- BUGFIX/STYLE 2 (command-center.tsx): Incident table Title min-w-52→44, Threat Score min-w-36→32, Status/AI columns get pr-4/pr-3 — "Investigating" badge no longer clips at the table edge.
+- BUGFIX/STYLE 3 (header.tsx): LiveClock hidden below sm breakpoint — "SentinelAI" brand no longer truncates to "Sentin…" on 375px screens.
+- FEATURE 1 — THREAT GRAPH (5th tab, spec §15 nice-to-have "entity/attack-chain graph view"):
+  * Contract: GraphNode/GraphLink/GraphData added to src/lib/types.ts (incidents inner ring, user/device/ip entities outer ring; entity severity = worst connected incident; ip nodes carry internal + malicious flags from threat-intel lists).
+  * Backend: GET /api/graph — loads incidents(+alerts)+all alerts, tracks entity→incident membership incl. severities, dedupes entity↔incident links, returns stats {entityCount, incidentCount, linkCount, unlinkedAlerts}. Verified: 41 entities / 8 incidents / 25 links / 10 unlinked alerts.
+  * Frontend: src/components/soc/tabs/threat-graph.tsx — deterministic radial "attack cluster" layout (pure SVG, no d3): incidents on inner ring sorted by severity rank, entities clustered angularly around their highest-priority incident with wide spread + 3-ring radial stagger to prevent label overlap, orphans on two outer rings. Node shapes by type: user=circle, device=rounded square, ip=rotated square (diamond); malicious IPs get red dashed spinning ring; incident node radius scales with threat score + drop-shadow glow; Critical incidents pulse.
+  * Interactions: hover/focus highlights node + neighbors (edges thicken, rest dims to 15% opacity), live info box in card header (label, severity chip, malicious/internal badges, sublabel, node type); click (or Enter/Space — nodes are focusable g[role=button]) opens the incident in Analysis via soc-store.openIncident; entity-type filter chips (All/Users/Devices/IPs) hide nodes+links; severity + malicious-IP legend; stats bar; horizontally scrollable min-w-[760px] on mobile; skeleton/error/empty states.
+  * Store/page/footer wiring: SocTab union + TAB_ORDER + keyboard shortcut 5; TAB_ITEMS icon=Waypoints; footer kbd hints now [1][2][3][4][5] "switch views".
+  * Browser-verified: cluster layout correct (INC-1001 red w/ admin+server-01+2 malicious IPs; INC-1008 amber w/ svc-mkeller cluster), hover info box, click-through to Analysis, filter chips, mobile scroll.
+- FEATURE 2 — FILE UPLOAD IMPORT (spec §15 nice-to-have "CSV upload"):
+  * ImportPanel (threat-feed.tsx): hidden file input + "Choose file" button + drag-&-drop zone over the textarea (emerald "Drop file to load" overlay); file read client-side via file.text(), 2 MB guard, format auto-guessed from extension (.json/.csv/.tsv/.txt/.log) and applied to the format Select; filename chip with paperclip + remove button; textarea edit clears chip; onSuccess clears file+textarea. Browser-verified end-to-end: uploaded test-feed.csv → toast "Loaded test-feed.csv · 0.3 KB · format set to CSV" → Import Feed → "Imported 2 alerts · 0 failed" → FILE-001/FILE-002 in feed (40 alerts total).
+- FEATURE 3 — ANALYST WORKING NOTES (completes F9 feedback loop; PATCH analystNote existed but had no UI):
+  * DetailPane: "Analyst Working Notes" section under the action row — textarea (600 char, live 0/600 counter), Save Note (disabled while pending/empty), Clear draft; onSuccess toast "Analyst note saved", invalidates incident/incidents/summary queries. Note renders in Analyst Explanation card as "[Analyst] …" and is preserved by LLM re-analysis per route contract. Browser-verified round-trip on INC-1001.
+- FEATURE 4 — INCIDENTS CSV EXPORT:
+  * Priority Incidents card header gets "Export CSV" button: fetches /api/incidents (all, not just top 5), builds escaped CSV (12 columns incl. classification/status/analyzed/sources/timestamps), downloads SentinelAI-incidents-YYYY-MM-DD.csv, toasts count. Browser-verified: "Exported 8 incidents to CSV", file content spot-checked.
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/ (pre-existing examples//skills/ errors out of scope); zero browser console errors; dev.log shows all 200s (GET /api/graph 200 ~20ms).
+- Data state: 40 alerts / 8 incidents (INC-1001 analyzed, Investigating, Genuine Threat + analyst note) + FILE-001/FILE-002 imported uncorrelated. Simulation OFF.
+
+Stage Summary:
+- All 4 spec §15 nice-to-haves now complete: BLUF export (.txt, round 2), live threat simulation (round 2), entity/attack-chain graph (round 3), CSV file upload (round 3). PDF export remains the only unimplemented nice-to-have (report .txt + copy + CSV export cover the export story; browser print-to-PDF available natively).
+- 5 SOC views: Command Center (KPIs/charts/table+export), Threat Feed (search/filter/upload/paste import), Threat Graph (NEW: entity↔incident clusters), Incident Analysis (score/timeline/MITRE/BLUF/notes), AI Copilot.
+- Keyboard: 1-5 switch views; footer hints updated; shortcuts correctly ignored while typing in inputs/notes.
+- Remaining ideas for next round: PDF report export (jsPDF or print stylesheet), graph pan/zoom + edge click metadata, saved filter presets, alert acknowledge/claim workflow, per-user audit trail on notes (currently generic "[Analyst]").
+- Risks: none known. /api/graph is read-only; graph layout is deterministic (pure function of data, no simulation drift between renders).

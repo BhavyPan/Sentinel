@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Area,
   AreaChart,
@@ -17,6 +19,7 @@ import {
 import {
   Bot,
   CircleAlert,
+  FileDown,
   Inbox,
   Send,
   ShieldAlert,
@@ -32,6 +35,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -118,18 +122,17 @@ function KpiCard({
   return (
     <motion.div {...fadeUp} transition={{ duration: 0.35, delay }}>
       <Card className={cn("border-l-2 p-4 transition-colors hover:border-emerald-500/30 hover:bg-card/80", t.border)}>
+        {/* header row: label + icon; value/sub get the full card width below (no truncation) */}
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground sm:text-[11px]">{label}</p>
-            <p className={cn("mt-1 font-mono text-3xl font-bold tabular-nums", t.value)}>
-              {formatCount(value)}
-            </p>
-            {sub && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</p>}
-          </div>
+          <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground sm:text-[11px]">{label}</p>
           <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border", t.icon)}>
             <Icon className="size-4.5" aria-hidden="true" />
           </span>
         </div>
+        <p className={cn("mt-0.5 font-mono text-3xl font-bold tabular-nums", t.value)}>
+          {formatCount(value)}
+        </p>
+        {sub && <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</p>}
       </Card>
     </motion.div>
   );
@@ -347,6 +350,54 @@ function ChartsRow({ data }: { data: DashboardSummary }) {
 
 function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
   const openIncident = useSocStore((s) => s.openIncident);
+  const [exporting, setExporting] = useState(false);
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const all = await apiGet<unknown>("/api/incidents");
+      const list = Array.isArray(all)
+        ? (all as IncidentDTO[])
+        : ((all as { incidents?: IncidentDTO[] }).incidents ?? []);
+      if (list.length === 0) {
+        toast.info("Nothing to export — no incidents yet.");
+        return;
+      }
+      const esc = (v: unknown) => {
+        const s = String(v ?? "");
+        return /["\n,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = [
+        "incident_id", "title", "severity", "classification", "threat_score",
+        "confidence_pct", "status", "alert_count", "sources", "ai_analyzed",
+        "created_at", "updated_at",
+      ].join(",");
+      const rows = list.map((i) =>
+        [
+          i.incidentId, i.title, i.severity, i.classification, i.threatScore,
+          i.confidence, i.status, i.alertCount, i.sources.join("; "), i.analyzed ? "yes" : "no",
+          i.createdAt, i.updatedAt,
+        ].map(esc).join(",")
+      );
+      const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `SentinelAI-incidents-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${list.length} incidents to CSV`);
+    } catch (err) {
+      toast.error("CSV export failed", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <motion.section {...fadeUp} transition={{ duration: 0.4, delay: 0.25 }} aria-label="Priority incidents">
       <Card className="gap-0 rounded-xl p-0">
@@ -361,6 +412,18 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                 Ranked by threat score — click a row to open the investigation view
               </CardDescription>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-9 shrink-0 gap-1.5 border-border text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+              onClick={() => void exportCsv()}
+              disabled={exporting}
+              aria-label="Export all incidents as CSV"
+            >
+              <FileDown className={exporting ? "size-3.5 animate-pulse" : "size-3.5"} aria-hidden="true" />
+              Export CSV
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -375,13 +438,13 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="w-14 pl-4 text-[11px] uppercase tracking-wider">Prio</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Incident</TableHead>
-                    <TableHead className="min-w-52 text-[11px] uppercase tracking-wider">Title</TableHead>
+                    <TableHead className="min-w-44 text-[11px] uppercase tracking-wider">Title</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Severity</TableHead>
-                    <TableHead className="min-w-36 text-[11px] uppercase tracking-wider">Threat Score</TableHead>
+                    <TableHead className="min-w-32 text-[11px] uppercase tracking-wider">Threat Score</TableHead>
                     <TableHead className="text-right text-[11px] uppercase tracking-wider">Conf.</TableHead>
-                    <TableHead className="text-right text-[11px] uppercase tracking-wider pr-4">Alerts</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-wider">Status</TableHead>
-                    <TableHead className="w-10 text-[11px] uppercase tracking-wider">AI</TableHead>
+                    <TableHead className="text-right text-[11px] uppercase tracking-wider">Alerts</TableHead>
+                    <TableHead className="pr-4 text-[11px] uppercase tracking-wider">Status</TableHead>
+                    <TableHead className="w-10 pr-3 text-[11px] uppercase tracking-wider">AI</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -437,10 +500,10 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                         <TableCell className="pr-4 text-right font-mono text-xs tabular-nums">
                           {inc.alertCount}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="pr-4">
                           <StatusBadge status={inc.status} />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="pr-3">
                           {inc.analyzed ? (
                             <Sparkles className="size-4 text-emerald-400" aria-label="AI analysis complete" />
                           ) : (

@@ -13,9 +13,9 @@ export function SocFooter() {
         <p className="text-center sm:text-right">
           <span
             className="mr-2 hidden items-center gap-1 font-mono text-[10px] md:inline-flex"
-            aria-label="Keyboard shortcut: press 1 to 4 to switch views"
+            aria-label="Keyboard shortcut: press 1 to 5 to switch views"
           >
-            {["1", "2", "3", "4"].map((k) => (
+            {["1", "2", "3", "4", "5"].map((k) => (
               <kbd
                 key={k}
                 className="inline-flex size-4.5 items-center justify-center rounded border border-white/15 bg-white/5 font-mono text-[10px] text-foreground/70"

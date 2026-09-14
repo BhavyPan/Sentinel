@@ -11,6 +11,7 @@ import {
   Download,
   FileText,
   Loader2,
+  NotebookPen,
   Radar,
   ShieldAlert,
   ShieldCheck,
@@ -512,6 +513,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
   });
 
   const [analyzeLine, setAnalyzeLine] = useState(0);
+  const [noteText, setNoteText] = useState("");
   const analyzeMutation = useMutation({
     mutationFn: () => apiSend(`/api/incidents/${incidentId}/analyze`, "POST"),
     onSuccess: (data: unknown) => {
@@ -547,11 +549,14 @@ function DetailPane({ incidentId }: { incidentId: string }) {
         ? `Status set to ${variables.status}`
         : variables.classification
           ? `Classification set to ${variables.classification}`
-          : "Incident updated";
+          : variables.analystNote
+            ? "Analyst note saved"
+            : "Incident updated";
       toast.success(what, { description: "Analyst feedback recorded." });
       queryClient.invalidateQueries({ queryKey: ["incident", incidentId] });
       queryClient.invalidateQueries({ queryKey: ["incidents"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      if (variables.analystNote) setNoteText("");
     },
     onError: (err: Error) => {
       toast.error("Update failed", { description: err.message });
@@ -696,6 +701,62 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                   <X className="size-4" aria-hidden="true" />
                 </Button>
               </div>
+            </div>
+
+            {/* Analyst note */}
+            <div className="flex flex-col gap-2 border-t border-border/70 pt-4">
+              <label
+                htmlFor="analyst-note"
+                className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                <NotebookPen className="size-3.5 text-emerald-400" aria-hidden="true" />
+                Analyst Working Notes
+              </label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <textarea
+                  id="analyst-note"
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  rows={2}
+                  maxLength={600}
+                  placeholder="Record triage decisions, containment steps, escalation path… (appended to the incident record)"
+                  className="soc-scroll min-h-11 flex-1 resize-y rounded-lg border border-input bg-background/60 px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Add an analyst note to this incident"
+                />
+                <div className="flex items-start gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11 gap-1.5 border-emerald-500/40 px-3 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+                    disabled={updateMutation.isPending || noteText.trim().length === 0}
+                    onClick={() => updateMutation.mutate({ analystNote: noteText.trim() })}
+                    aria-label="Save analyst note"
+                  >
+                    {updateMutation.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                    )}
+                    Save Note
+                  </Button>
+                  {noteText.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="min-h-11 px-2 text-muted-foreground"
+                      onClick={() => setNoteText("")}
+                      aria-label="Clear note draft"
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <p className="font-mono text-[10px] text-muted-foreground/70">
+                {noteText.length}/600 characters · notes are timestamped and appended to the case file
+              </p>
             </div>
           </div>
         </Card>

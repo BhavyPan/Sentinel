@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { useCopilotStore } from "@/store/copilot-store";
 
-export type SocTab = "command" | "feed" | "analysis" | "copilot";
+export type SocTab = "command" | "feed" | "graph" | "analysis" | "copilot";
 
 /**
  * Global SOC shell state: which tab is active + which incident is selected.

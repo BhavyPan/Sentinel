@@ -142,3 +142,55 @@ export interface IncidentUpdatePayload {
 export interface ChatHistory {
   messages: { id: string; role: "user" | "assistant"; content: string; createdAt: string }[];
 }
+
+// ============================================================
+// Threat Graph (entity / attack-cluster view)
+// ============================================================
+
+export type GraphEntityType = "user" | "device" | "ip";
+
+/** GET /api/graph → node. Incident nodes sit in the inner ring, entities in the outer ring. */
+export interface GraphNode {
+  /** "inc:<dbId>" or "ent:<type>:<value>" */
+  id: string;
+  kind: "incident" | "entity";
+  /** entity nodes only */
+  entityType?: GraphEntityType;
+  /** display text: "INC-1001", "admin", "server-01", "203.0.113.66" */
+  label: string;
+  /** secondary line under the label */
+  sublabel: string;
+  /** incident: own severity · entity: worst connected incident severity */
+  severity: Severity | "Info";
+  /** incident nodes: threat score · entity nodes: connected incident count */
+  weight: number;
+  /** alerts touching this node */
+  alertCount: number;
+  /** incidents this node participates in (db ids) — for navigation */
+  incidentDbIds: string[];
+  /** incident nodes only */
+  classification?: Classification;
+  /** ip entities only */
+  internal?: boolean;
+  /** ip entities only: value appears in MALICIOUS_IPS intel list */
+  malicious?: boolean;
+}
+
+export interface GraphLink {
+  source: string; // node id
+  target: string; // node id
+  severity: Severity; // edge color source (incident severity)
+  incidentDbId: string; // for click-through
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  stats: {
+    entityCount: number;
+    incidentCount: number;
+    linkCount: number;
+    unlinkedAlerts: number;
+  };
+  generatedAt: string;
+}
