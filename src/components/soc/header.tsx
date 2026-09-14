@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck } from "lucide-react";
+import { Search, ShieldCheck } from "lucide-react";
 import { SeedButton } from "@/components/soc/seed-button";
 import { SimToggle } from "@/components/soc/sim-toggle";
+import { useCommandPalette } from "@/components/soc/command-palette";
 import { apiGet } from "@/lib/api-client";
 import type { DashboardSummary } from "@/lib/types";
 
@@ -56,6 +57,26 @@ function LastAlertTicker() {
   );
 }
 
+/** ⌘K quick-jump trigger — opens the global command palette. */
+function PaletteTrigger() {
+  const setOpen = useCommandPalette((s) => s.setOpen);
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      aria-label="Open command palette (Command K)"
+      title="Quick jump — ⌘K / Ctrl+K"
+      className="inline-flex min-h-9 items-center gap-2 rounded-full border border-white/12 bg-card/70 px-3 text-[11px] text-muted-foreground transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+    >
+      <Search className="size-3.5" aria-hidden="true" />
+      <span className="hidden md:inline">Quick jump…</span>
+      <kbd className="hidden rounded border border-border bg-muted/60 px-1 font-mono text-[10px] md:inline">
+        ⌘K
+      </kbd>
+    </button>
+  );
+}
+
 /** Sticky SOC header: brand + tagline, live clock, SYSTEM ONLINE badge, sim + seed actions. */
 export function SocHeader() {
   return (
@@ -79,6 +100,7 @@ export function SocHeader() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+          <PaletteTrigger />
           <LastAlertTicker />
           <span className="hidden sm:inline"><LiveClock /></span>
           <SimToggle />

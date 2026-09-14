@@ -5,6 +5,7 @@ import { LayoutDashboard, Radio, Crosshair, Bot, Waypoints } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SocHeader } from "@/components/soc/header";
 import { SocFooter } from "@/components/soc/footer";
+import { CommandPalette } from "@/components/soc/command-palette";
 import { CommandCenter } from "@/components/soc/tabs/command-center";
 import { ThreatFeed } from "@/components/soc/tabs/threat-feed";
 import { ThreatGraph } from "@/components/soc/tabs/threat-graph";
@@ -37,7 +38,7 @@ export default function Page() {
     if (saved && saved !== "command") setActiveTab(saved);
   }, [setActiveTab]);
 
-  // Keyboard shortcuts: 1-4 switch views (ignored while typing in form fields)
+  // Keyboard shortcuts: 1-5 switch views (ignored while typing in form fields; ⌘K handled by the palette)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -56,6 +57,7 @@ export default function Page() {
   return (
     <div className="flex min-h-screen flex-col">
       <SocHeader />
+      <CommandPalette />
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-4 sm:px-6 sm:py-6">
         <Tabs

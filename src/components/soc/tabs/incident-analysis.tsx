@@ -21,7 +21,6 @@ import {
   ThumbsDown,
   ThumbsUp,
   UserRound,
-  X,
 } from "lucide-react";
 import {
   Card,
@@ -788,16 +787,6 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                 >
                   <ThumbsDown className="size-3.5" aria-hidden="true" />
                   Mark False Positive
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-11 shrink-0 text-muted-foreground"
-                  aria-label="Dismiss feedback (no-op in demo)"
-                  title="Dismiss — no-op in this demo"
-                >
-                  <X className="size-4" aria-hidden="true" />
                 </Button>
               </div>
             </div>

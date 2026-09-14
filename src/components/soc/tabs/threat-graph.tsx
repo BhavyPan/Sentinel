@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
+  ArrowRight,
   Maximize,
   Network,
   MousePointerClick,
@@ -13,6 +14,7 @@ import {
   Globe,
   ZoomIn,
   ZoomOut,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/soc/error-state";
 import { EmptyHero } from "@/components/soc/empty-hero";
 import { apiGet } from "@/lib/api-client";
-import type { GraphData, GraphNode } from "@/lib/types";
+import type { GraphData, GraphLink, GraphNode } from "@/lib/types";
 import { severityStyle } from "@/lib/ui-helpers";
 import { useSocStore } from "@/store/soc-store";
 import { cn } from "@/lib/utils";
@@ -367,6 +369,128 @@ function NodeInfoBox({ node }: { node: GraphNode | null }) {
 }
 
 // ------------------------------------------------------------------
+// Edge selection info panels
+// ------------------------------------------------------------------
+
+interface LinkPanelProps {
+  link: GraphLink;
+  source: GraphNode | undefined;
+  target: GraphNode | undefined;
+  onClose: () => void;
+  onOpenIncident: () => void;
+}
+
+/** Compact header info box describing the selected entity → incident edge. */
+function LinkInfoBox({ link, source, target, onClose, onOpenIncident }: LinkPanelProps) {
+  const sev = severityStyle(link.severity);
+  const srcLabel = source?.label ?? link.source.split(":").pop() ?? "?";
+  const tgtLabel = target?.label ?? link.target.split(":").pop() ?? "?";
+  return (
+    <div
+      className="rounded-lg border border-border bg-background/80 px-3 py-2.5 shadow-lg backdrop-blur"
+      role="status"
+      aria-label={`Relationship details: ${srcLabel} participates in ${tgtLabel}`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-xs font-bold text-foreground">{srcLabel}</span>
+        <ArrowRight className={cn("size-3.5 shrink-0", sev.text)} aria-hidden="true" />
+        <span className={cn("font-mono text-xs font-bold", sev.text)}>{tgtLabel}</span>
+        <span
+          className={cn(
+            "ml-auto rounded-full border px-1.5 py-px font-mono text-[9px] font-semibold uppercase",
+            sev.border,
+            sev.bg,
+            sev.text
+          )}
+        >
+          {link.severity}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Clear edge selection"
+          title="Clear selection (Esc)"
+          className="ml-1 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <X className="size-3.5" aria-hidden="true" />
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+        {source?.entityType ? <span className="font-mono uppercase text-emerald-400/70">{source.entityType} · </span> : null}
+        <span className="font-semibold text-foreground/90">{link.alertCount}</span> alert{link.alertCount === 1 ? "" : "s"} tie this
+        entity into the incident — evidence below.
+      </p>
+    </div>
+  );
+}
+
+/** Evidence strip under the canvas: backing alerts + deep-link into the incident. */
+function LinkEvidenceStrip({ link, source, target, onClose, onOpenIncident }: LinkPanelProps) {
+  const sev = severityStyle(link.severity);
+  const srcLabel = source?.label ?? link.source.split(":").pop() ?? "?";
+  const tgtLabel = target?.label ?? link.target.split(":").pop() ?? "?";
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          relationship
+        </span>
+        <span className="truncate font-mono text-xs font-bold">{srcLabel}</span>
+        <ArrowRight className={cn("size-3.5 shrink-0", sev.text)} aria-hidden="true" />
+        <span className={cn("truncate font-mono text-xs font-bold", sev.text)}>{tgtLabel}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          evidence
+        </span>
+        {link.sampleAlertIds.length === 0 ? (
+          <span className="font-mono text-[11px] text-muted-foreground">no backing alerts</span>
+        ) : (
+          link.sampleAlertIds.map((id) => (
+            <span
+              key={id}
+              className="rounded border border-border bg-muted/50 px-1.5 py-px font-mono text-[10px] text-foreground/80"
+              title="Backing alert id (open in Threat Feed)"
+            >
+              {id}
+            </span>
+          ))
+        )}
+        {link.alertCount > link.sampleAlertIds.length && (
+          <span className="font-mono text-[10px] text-muted-foreground">
+            +{link.alertCount - link.sampleAlertIds.length} more
+          </span>
+        )}
+      </div>
+      <div className="ml-auto flex items-center gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="min-h-9 gap-1.5 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+          onClick={onOpenIncident}
+          aria-label={`Open incident investigation for ${tgtLabel}`}
+        >
+          <ShieldAlert className="size-3.5" aria-hidden="true" />
+          Open investigation
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-9 text-muted-foreground"
+          onClick={onClose}
+          aria-label="Clear edge selection"
+          title="Clear selection (Esc)"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Skeleton / empty
 // ------------------------------------------------------------------
 
@@ -421,6 +545,7 @@ function clampView(v: ViewState): ViewState {
 export function ThreatGraph() {
   const openIncidentRaw = useSocStore((s) => s.openIncident);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [selectedLinkKey, setSelectedLinkKey] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [view, setView] = useState<ViewState>({ x: 0, y: 0, k: 1 });
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -534,6 +659,16 @@ export function ThreatGraph() {
     return m;
   }, [data]);
 
+  // Escape clears the edge selection (kept before any early returns — hooks order)
+  useEffect(() => {
+    if (!selectedLinkKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedLinkKey(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedLinkKey]);
+
   if (query.isLoading) return <GraphSkeleton />;
   if (query.isError) {
     return (
@@ -546,6 +681,8 @@ export function ThreatGraph() {
   if (!data || data.nodes.length === 0) return <EmptyHero />;
 
   const hoverNode = hoverId ? data.nodes.find((n) => n.id === hoverId) ?? null : null;
+  const selectedLink =
+    data.links.find((l) => `${l.source}->${l.target}` === selectedLinkKey) ?? null;
 
   const isDimmed = (id: string): boolean => {
     if (!hoverId) return false;
@@ -564,6 +701,12 @@ export function ThreatGraph() {
   const linkVisible = (sourceId: string, targetId: string): boolean => {
     const s = data.nodes.find((n) => n.id === sourceId);
     return s ? entityVisible(s) : true;
+  };
+
+  const selectLink = (l: GraphLink) => {
+    if (didPanRef.current) return; // ignore clicks that were actually drags
+    setHoverId(null);
+    setSelectedLinkKey(`${l.source}->${l.target}`);
   };
 
   return (
@@ -617,7 +760,7 @@ export function ThreatGraph() {
             )}
             <span className="ml-auto hidden items-center gap-1.5 md:flex">
               <MousePointerClick className="size-3.5" aria-hidden="true" />
-              click a node to open its incident · drag to pan · scroll or +/- to zoom
+              click a node to open its incident · click an edge for details · drag to pan · scroll or +/- to zoom
             </span>
           </div>
         </Card>
@@ -643,7 +786,17 @@ export function ThreatGraph() {
                 </CardDescription>
               </div>
               <div className="w-full max-w-sm lg:w-auto">
-                <NodeInfoBox node={hoverNode} />
+                {selectedLink && !hoverNode ? (
+                  <LinkInfoBox
+                    link={selectedLink}
+                    source={data.nodes.find((n) => n.id === selectedLink.source)}
+                    target={data.nodes.find((n) => n.id === selectedLink.target)}
+                    onClose={() => setSelectedLinkKey(null)}
+                    onOpenIncident={() => openIncidentRaw(selectedLink.incidentDbId)}
+                  />
+                ) : (
+                  <NodeInfoBox node={hoverNode} />
+                )}
               </div>
             </div>
           </CardHeader>
@@ -716,20 +869,38 @@ export function ThreatGraph() {
                   // control point pulled toward center → gentle arc
                   const cx = mx + (CX - mx) * 0.22;
                   const cy = my + (CY - my) * 0.22;
+                  const key = `${l.source}->${l.target}`;
                   const active = hoverId === l.source || hoverId === l.target;
+                  const selected = selectedLinkKey === key;
                   const dim = hoverId && !active;
                   const hidden = !linkVisible(l.source, l.target);
+                  const otherSelected = selectedLinkKey && !selected;
                   if (hidden) return null;
                   return (
-                    <path
-                      key={`${l.source}->${l.target}`}
-                      d={`M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`}
-                      fill="none"
-                      stroke={sev.hex}
-                      strokeWidth={active ? 2.4 : 1.1}
-                      strokeOpacity={active ? 0.9 : dim ? 0.08 : 0.3}
-                      className="transition-all duration-200"
-                    />
+                    <g key={key}>
+                      <path
+                        d={`M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`}
+                        fill="none"
+                        stroke={sev.hex}
+                        strokeWidth={selected ? 3 : active ? 2.4 : 1.1}
+                        strokeOpacity={selected ? 1 : active ? 0.9 : dim || otherSelected ? 0.08 : 0.3}
+                        className="transition-all duration-200"
+                      />
+                      {/* wide transparent hit path — makes the thin edge clickable */}
+                      <path
+                        d={`M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={14}
+                        pointerEvents="stroke"
+                        className="cursor-pointer"
+                        onClick={() => selectLink(l)}
+                        onMouseEnter={() => setHoverId(l.source)}
+                        onMouseLeave={() => setHoverId(null)}
+                      >
+                        <title>{`${l.source.split(":").pop()} → ${l.target.split(":").pop()} · ${l.alertCount} alert${l.alertCount === 1 ? "" : "s"} — click for details`}</title>
+                      </path>
+                    </g>
                   );
                 })}
 
@@ -772,6 +943,17 @@ export function ThreatGraph() {
                   })}
               </svg>
               </div>
+              {selectedLink && (
+                <div className="border-t border-border/70 px-4 py-3">
+                  <LinkEvidenceStrip
+                    link={selectedLink}
+                    source={data.nodes.find((n) => n.id === selectedLink.source)}
+                    target={data.nodes.find((n) => n.id === selectedLink.target)}
+                    onClose={() => setSelectedLinkKey(null)}
+                    onOpenIncident={() => openIncidentRaw(selectedLink.incidentDbId)}
+                  />
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

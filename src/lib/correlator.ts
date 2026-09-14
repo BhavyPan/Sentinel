@@ -1,8 +1,10 @@
 /**
  * SentinelAI correlator (spec §6).
  * Deterministic pair scoring + Union-Find transitive closure.
- * Rebuilds ALL incidents from ALL alerts (documented MVP behavior:
- * re-correlation resets analysis state).
+ * Rebuilds ALL incidents from ALL alerts. When a rebuilt incident group has
+ * exactly the same alert membership as a pre-existing incident, the analyst
+ * state (analyzed flag, BLUF, explanation, status, classification) is carried
+ * over — re-correlation no longer destroys analyst/LLM work.
  */
 import { db } from "@/lib/db";
 import { scoreIncident, type ScorerAlert } from "./scorer";
@@ -102,11 +104,56 @@ class UnionFind {
 
 /**
  * Rebuild every incident from every alert currently in the DB.
- * All incidents are deleted first (alerts detached) — re-correlation resets
- * LLM analysis and analyst notes (documented MVP behavior).
+ * Alert sets that exactly match a pre-existing incident carry over their
+ * analyst state (analyzed / BLUF / explanation / status / classification);
+ * groups that changed recompute from scratch.
  */
 export async function runCorrelation(): Promise<CorrelateStats> {
   const incidentsBefore = await db.incident.count();
+
+  // --- snapshot analyst/LLM state keyed by each incident's alert-id set ---
+  const [prevIncidents, prevAlertLinks] = await Promise.all([
+    db.incident.findMany({
+      select: {
+        id: true,
+        analyzed: true,
+        bluf: true,
+        explanation: true,
+        status: true,
+        classification: true,
+      },
+    }),
+    db.alert.findMany({
+      where: { incidentId: { not: null } },
+      select: { incidentId: true, id: true },
+    }),
+  ]);
+  const prevById = new Map(prevIncidents.map((i) => [i.id, i]));
+  const alertIdsByIncident = new Map<string, string[]>();
+  for (const a of prevAlertLinks) {
+    if (!a.incidentId) continue;
+    const list = alertIdsByIncident.get(a.incidentId);
+    if (list) list.push(a.id);
+    else alertIdsByIncident.set(a.incidentId, [a.id]);
+  }
+  const carriedBySet = new Map<
+    string,
+    { analyzed: boolean; bluf: string | null; explanation: string | null; status: string; classification: string }
+  >();
+  for (const [incidentDbId, ids] of alertIdsByIncident) {
+    const detail = prevById.get(incidentDbId);
+    if (!detail) continue;
+    carriedBySet.set(
+      [...ids].sort().join("|"),
+      {
+        analyzed: detail.analyzed,
+        bluf: detail.bluf,
+        explanation: detail.explanation,
+        status: detail.status,
+        classification: detail.classification,
+      }
+    );
+  }
 
   await db.alert.updateMany({ data: { incidentId: null } });
   await db.incident.deleteMany({});
@@ -153,26 +200,29 @@ export async function runCorrelation(): Promise<CorrelateStats> {
   // --- persist incidents + attach alerts (renumber from INC-1001) ---
   let seq = 1001;
   let grouped = 0;
+  let preserved = 0;
   for (const group of incidentGroups) {
     const result = scoreIncident(group);
     const incidentId = `INC-${seq}`;
     const ids = group.map((a) => a.id);
+    const carried = carriedBySet.get([...ids].sort().join("|"));
+    if (carried) preserved++;
     await db.$transaction(async (tx) => {
       const created = await tx.incident.create({
         data: {
           incidentId,
           title: result.title,
-          classification: result.classification,
+          classification: carried?.classification ?? result.classification,
           severity: result.severity,
           threatScore: result.threatScore,
           confidence: result.confidence,
           mitre: JSON.stringify(result.mitre),
-          bluf: result.bluf,
-          explanation: null,
+          bluf: carried?.bluf ?? result.bluf,
+          explanation: carried?.explanation ?? null,
           evidence: JSON.stringify(result.evidence),
-          recommendedActions: JSON.stringify(deterministicActions(result.classification, group)),
-          status: "Open",
-          analyzed: false,
+          recommendedActions: JSON.stringify(deterministicActions(carried?.classification ?? result.classification, group)),
+          status: carried?.status ?? "Open",
+          analyzed: carried?.analyzed ?? false,
           riskSignals: JSON.stringify(result.riskSignals),
         },
       });
@@ -183,6 +233,10 @@ export async function runCorrelation(): Promise<CorrelateStats> {
     });
     grouped += group.length;
     seq++;
+  }
+
+  if (preserved > 0) {
+    console.log(`[correlator] preserved analyst state for ${preserved} unchanged incident group(s)`);
   }
 
   return {

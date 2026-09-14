@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiGet, apiSend } from "@/lib/api-client";
+import { timeAgo } from "@/lib/ui-helpers";
 import type { ChatHistory, CopilotChatResult, DashboardSummary } from "@/lib/types";
 import { useCopilotStore } from "@/store/copilot-store";
 import { cn } from "@/lib/utils";
@@ -167,13 +168,23 @@ export function AiCopilot() {
     queryFn: () => apiGet<DashboardSummary>("/api/dashboard/summary"),
     refetchInterval: 15_000,
   });
-  const topIncidentId = summaryQuery.data?.topIncidents[0]?.incidentId;
+  const summary = summaryQuery.data;
+  const topIncidentId = summary?.topIncidents[0]?.incidentId;
   const quickQuestions = [
     "What is the highest-risk threat?",
     topIncidentId ? `Why is ${topIncidentId} critical?` : FALLBACK_QUESTIONS[1],
     FALLBACK_QUESTIONS[2],
     FALLBACK_QUESTIONS[3],
   ];
+
+  const contextChips = summary
+    ? [
+        { label: "incidents", value: `${summary.counts.open} open / ${summary.totalIncidents}` },
+        { label: "genuine threats", value: `${summary.counts.genuineThreats}` },
+        { label: "awaiting triage", value: `${summary.counts.unacknowledgedAlerts} alerts` },
+        { label: "ai-analysed", value: `${summary.counts.analyzed}/${summary.totalIncidents}` },
+      ]
+    : [];
 
   return (
     <Card className="mx-auto flex w-full max-w-4xl flex-col gap-0 rounded-xl p-0">
@@ -213,6 +224,29 @@ export function AiCopilot() {
           {confirmingClear ? "Confirm?" : "Clear"}
         </Button>
       </div>
+
+      {/* Live context strip — the data grounding the copilot's answers */}
+      {contextChips.length > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border/70 bg-emerald-500/[0.04] px-4 py-2"
+          aria-label="Copilot data context"
+        >
+          <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.18em] text-emerald-400/70">
+            context
+          </span>
+          {contextChips.map((c) => (
+            <span key={c.label} className="flex items-baseline gap-1.5 font-mono text-[10px]">
+              <span className="font-bold tabular-nums text-foreground/90">{c.value}</span>
+              <span className="uppercase tracking-wider text-muted-foreground">{c.label}</span>
+            </span>
+          ))}
+          {summary?.lastUpdated && (
+            <span className="ml-auto hidden font-mono text-[10px] text-muted-foreground sm:inline">
+              data as of {timeAgo(summary.lastUpdated)}
+            </span>
+          )}
+        </div>
+      )}
 
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-4">
         {/* Message list */}

@@ -25,6 +25,11 @@ export function SocFooter() {
             ))}
             <span className="ml-1 uppercase tracking-wider">switch views</span>
             <span className="mx-1.5" aria-hidden="true">·</span>
+            <kbd className="inline-flex h-4.5 items-center rounded border border-white/15 bg-white/5 px-1 font-mono text-[10px] text-foreground/70">
+              ⌘K
+            </kbd>
+            <span className="ml-1 uppercase tracking-wider">quick jump</span>
+            <span className="mx-1.5" aria-hidden="true">·</span>
           </span>
           Simulated demo data · Not for operational use
           <span className="mx-1.5" aria-hidden="true">·</span>
