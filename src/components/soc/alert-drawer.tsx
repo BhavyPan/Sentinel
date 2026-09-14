@@ -1,17 +1,20 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Check,
   CheckCheck,
   Copy,
+  Crosshair,
   Fingerprint,
   Globe,
   Link2,
   Loader2,
   MonitorSmartphone,
+  Plus,
+  TriangleAlert,
   Unlink,
   User,
 } from "lucide-react";
@@ -26,8 +29,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { EventChip, RawSeverityBadge, SourceChip } from "@/components/soc/badges";
-import { apiSend } from "@/lib/api-client";
-import type { AlertDTO, AlertUpdateResult } from "@/lib/types";
+import { apiGet, apiSend } from "@/lib/api-client";
+import { extractIocs, type BulkIocType } from "@/lib/watchlist-parse";
+import type { AlertDTO, AlertUpdateResult, WatchlistListResult } from "@/lib/types";
 import { formatDateTime, timeAgo } from "@/lib/ui-helpers";
 import { useSocStore } from "@/store/soc-store";
 import { cn } from "@/lib/utils";
@@ -67,9 +71,80 @@ function EntityRow({
   );
 }
 
+/** Icon + label per IOC type (mirrors the watchlist card TYPE_META). */
+const IOC_META: Record<BulkIocType, { label: string; icon: typeof Globe }> = {
+  ip: { label: "IP", icon: Globe },
+  domain: { label: "Domain", icon: TriangleAlert },
+  hash: { label: "Hash", icon: Fingerprint },
+};
+
+/** One quick-add IOC chip: value + on-list state + add-to-watchlist action. */
+function IocChip({
+  ioc,
+  onList,
+  onAdd,
+  adding,
+}: {
+  ioc: { type: BulkIocType; value: string };
+  onList: boolean;
+  onAdd: () => void;
+  adding: boolean;
+}) {
+  const meta = IOC_META[ioc.type];
+  const Icon = meta.icon;
+  return (
+    <li
+      className={cn(
+        "flex min-h-8 items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors",
+        onList
+          ? "border-emerald-500/30 bg-emerald-500/10"
+          : "border-border bg-muted/40 hover:border-red-500/40 hover:bg-red-500/5"
+      )}
+    >
+      <Icon
+        className={cn("size-3 shrink-0", onList ? "text-emerald-400" : "text-red-400/80")}
+        aria-hidden="true"
+      />
+      <span className="truncate font-mono text-[11px] text-foreground/90" title={`${meta.label} · ${ioc.value}`}>
+        {ioc.value}
+      </span>
+      <span className="hidden shrink-0 rounded border border-border bg-background/60 px-1 font-mono text-[8px] uppercase tracking-wider text-muted-foreground sm:inline">
+        {ioc.type}
+      </span>
+      {onList ? (
+        <span
+          className="ml-auto inline-flex shrink-0 items-center gap-0.5 pl-1 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-400/90"
+          title="Already on your watchlist"
+        >
+          <Check className="size-3" aria-hidden="true" />
+          listed
+        </span>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="ml-auto size-6 shrink-0 text-muted-foreground hover:text-emerald-300"
+          disabled={adding}
+          onClick={onAdd}
+          aria-label={`Add ${ioc.value} to watchlist`}
+          title="Add to watchlist — future alerts referencing it score as known-malicious"
+        >
+          {adding ? (
+            <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+          ) : (
+            <Plus className="size-3.5" aria-hidden="true" />
+          )}
+        </Button>
+      )}
+    </li>
+  );
+}
+
 /**
  * AlertDetailDrawer — right-side sheet with the full normalized alert:
- * entities, description, correlation status, triage state and raw metadata JSON.
+ * entities, description, extracted IOCs, correlation status, triage state and
+ * raw metadata JSON.
  */
 export function AlertDrawer({
   alert,
@@ -84,6 +159,44 @@ export function AlertDrawer({
   const openIncident = useSocStore((s) => s.openIncident);
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
+
+  // watchlist cache is shared with the Command Center card — lets chips show
+  // an "already listed" state without an extra fetch in most cases
+  const watchlistQuery = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: () => apiGet<WatchlistListResult>("/api/watchlist"),
+    enabled: alert !== null,
+    staleTime: 15_000,
+  });
+
+  // candidate IOCs from the entity ip + description + metadata values
+  const iocs = useMemo(() => {
+    if (!alert) return [];
+    const metaText = Object.entries(alert.metadata ?? {})
+      .filter(([, v]) => v !== null && v !== undefined)
+      .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+      .join("\n");
+    return extractIocs([alert.ip ?? "", alert.description ?? "", metaText].join("\n"));
+  }, [alert]);
+
+  const listedValues = useMemo(() => {
+    const items = watchlistQuery.data?.items ?? [];
+    return new Set(items.map((i) => `${i.type}:${i.value.toLowerCase()}`));
+  }, [watchlistQuery.data]);
+
+  const addIocMutation = useMutation({
+    mutationFn: (payload: { type: BulkIocType; value: string }) =>
+      apiSend<{ message: string; duplicate?: boolean }>("/api/watchlist", "POST", payload),
+    onSuccess: (d) => {
+      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      toast.success("IOC added to watchlist", {
+        description: d.message,
+      });
+    },
+    onError: (err: Error) => {
+      toast.error("Could not add IOC", { description: err.message });
+    },
+  });
 
   const ackMutation = useMutation({
     mutationFn: (a: AlertDTO) =>
@@ -172,6 +285,42 @@ export function AlertDrawer({
                     {alert.description || "—"}
                   </p>
                 </section>
+
+                {/* extracted indicators of compromise */}
+                {iocs.length > 0 && (
+                  <section aria-label="Indicators of compromise">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        <Crosshair className="size-3.5 text-red-400" aria-hidden="true" />
+                        Indicators of Compromise
+                        <span className="rounded-full border border-red-500/40 bg-red-500/10 px-1.5 font-mono text-[9px] font-bold text-red-300">
+                          {iocs.length}
+                        </span>
+                      </h4>
+                      <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+                        tap + to watch
+                      </span>
+                    </div>
+                    <ul className="mt-1.5 grid grid-cols-1 gap-1.5" aria-label="Extracted indicators">
+                      {iocs.map((ioc) => (
+                        <IocChip
+                          key={`${ioc.type}:${ioc.value}`}
+                          ioc={ioc}
+                          onList={listedValues.has(`${ioc.type}:${ioc.value.toLowerCase()}`)}
+                          adding={
+                            addIocMutation.isPending &&
+                            addIocMutation.variables?.value === ioc.value
+                          }
+                          onAdd={() => addIocMutation.mutate(ioc)}
+                        />
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/70">
+                      Auto-extracted from this alert — watched indicators raise scores on future
+                      correlations and turn red in the Threat Graph.
+                    </p>
+                  </section>
+                )}
 
                 {/* correlation status */}
                 <section aria-label="Correlation status">

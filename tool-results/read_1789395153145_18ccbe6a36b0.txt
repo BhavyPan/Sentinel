@@ -1,0 +1,220 @@
+   100→- Verified analyst feedback: Confirm Threat (classification persisted), status workflow dropdown (Open → Investigating persisted), PATCH endpoint.
+   101→- Verified Threat Feed: source filter (Firewall → 4 rows), correlated chips link, import panel — pasted raw JSON alert X9001 via UI → normalized → queryable.
+   102→- Verified mobile 375px: icon-only tabs, 2-col KPI grid, stacked charts, horizontally scrollable table, footer respects bottom.
+   103→- Final checks: bun run lint clean; bunx tsc --noEmit clean for src/; dev.log shows no runtime errors; zero browser console errors.
+   104→
+   105→Stage Summary:
+   106→- App is demo-ready: full D2 pipeline works (input → normalize → correlate → score → MITRE → BLUF → prioritized view → Copilot), all 13 acceptance criteria pass.
+   107→- Current data state: seeded demo set + 1 imported alert X9001 (uncorrelated); INC-1001 analyzed by LLM, status Investigating, classification Genuine Threat.
+   108→- Known minor deviations documented by backend in Task 2-a section (correlation weight tweak +2→3 same-user, T1588 fallback).
+   109→---
+   110→Task ID: 5
+   111→Agent: Z.ai Code (main)
+   112→Task: Create recurring webDevReview scheduled task + close out MVP build
+   113→
+   114→Work Log:
+   115→- Created cron job (ID 384658): every 15 min, kind=webDevReview, tz Asia/Calcutta, mandatory D2 review prompt (assess → QA via agent-browser → fix bugs or add features → update this worklog).
+   116→
+   117→Stage Summary:
+   118→- SentinelAI D2 MVP is complete, browser-verified, and demo-ready. Next scheduled reviews will iterate on polish and new features (nice-to-haves from spec §15: PDF BLUF export, live alert simulation, entity graph, CSV upload, dark-theme animations).
+   119→---
+   120→Task ID: r2 (webDevReview round 2)
+   121→Agent: Z.ai Code (main)
+   122→Task: Scheduled review — QA sweep, restart dev server, BLUF export (acceptance gap), live threat simulation, styling details
+   123→
+   124→Work Log:
+   125→- STATUS: found dev server down on review start (page 000). Restarted `bun run dev`; DB state intact (30 alerts / 6 incidents / INC-1001 analyzed). QA sweep at 1440x900 + 375x812: zero console errors, all tabs functional.
+   126→- FEATURE 1 — BLUF export/copy (spec acceptance "User can export or copy the BLUF summary", previously missing):
+   127→  * incident-analysis.tsx: added "Copy BLUF" (clipboard + Copied feedback state + toast) and "Report .txt" (Blob download `SentinelAI-report-<ID>.txt`) buttons to the BLUF card header.
+   128→  * buildReportText() generates a full briefing: header block (severity/classification/score/confidence/sources), MITRE mapping, risk signals, BLUF, analyst explanation, recommended actions, evidence, related-alert timeline, disclaimer. Browser-verified: toast "Full report downloaded (INC-1001)".
+   129→- FEATURE 2 — Live threat simulation (spec §15 nice-to-have):
+   130→  * src/lib/simulator.ts: stateless scenario engine — inspects recent alerts, then 55% benign noise (VPN logins, backups, telemetry, user-reported phishing) / 45% escalating stories (svc-account brute-force ramp → successful login → 2.8 GB download; DMZ port-scan ramp; phishing → C2 beacon on 193.142.146.88; rare threat-intel IOC match).
+   131→  * Incremental correlation (NEVER wipes incidents): scores new alert against last-30-min alerts; best partner in an existing incident → attach (refreshes deterministic fields only if incident not analyzed; preserves LLM analysis + analyst feedback); links only ungrouped alerts → create NEW incident; else stays ungrouped.
+   132→  * POST /api/alerts/simulate returns {action: attached|new-incident|ungrouped, alert, note, incident, summary}.
+   133→  * sim-toggle.tsx header switch: 9s ticks, react-query invalidation (summary/alerts/incidents/incident), sonner toasts color-coded by outcome, red pulsing state while on. Guarded against overlapping in-flight ticks.
+   134→  * Browser-verified live: INC-1007 created from simulated + imported scan alerts (3 alerts); INC-1008 grew Low→Medium→High "Suspected large data exfiltration by svc-mkeller" (6 alerts) ranked P2. Untoggle verified.
+   135→- STYLING details (mandatory):
+   136→  * KPI labels no longer truncate at 1440px ("TOTAL ALERTS"/"ACTIVE INCIDENTS"/"FALSE POSITIVES" fully visible) — whitespace-nowrap + 10-11px sizing.
+   137→  * Critical incidents get pulsing red dot + faint red row tint in Command Center table, and pulsing severity dot in the Analysis incident list.
+   138→  * Header: "LAST ALERT <now|Xm ago>" mono ticker (from summary.lastUpdated) + SIM toggle; brand text-base on mobile (fixes truncation), SIM text label hidden <sm.
+   139→  * Keyboard shortcuts: keys 1-4 switch views (input/textarea/select safe, modifier-safe); footer shows [1][2][3][4] switch views kbd hints; browser-verified (pressed 2 → Threat Feed, 3 → Analysis).
+   140→- Checks: bun run lint clean (fixed unused eslint-disable warning); bunx tsc --noEmit clean for src/; dev.log clean; zero browser console errors after full sweep.
+   141→
+   142→Stage Summary:
+   143→- Current state: 38 alerts / 8 incidents (1 Critical, 2 High, 3 Low, 2 FP), INC-1001 analyzed (Investigating, Genuine Threat); simulation left OFF.
+   144→- All spec MUST-have acceptance criteria now incl. BLUF export; 2 of 4 §15 nice-to-haves done (live simulation, report download).
+   145→- Remaining nice-to-haves for next round: CSV file upload (paste works today), entity/attack-chain graph view, PDF report export, animated threat-landing page details.
+   146→- Risks: none known; simulator is demo-only (write path guarded by explicit toggle; no auth model in MVP).
+   147→---
+   148→Task ID: r3 (webDevReview round 3)
+   149→Agent: Z.ai Code (main)
+   150→Task: Scheduled review — QA sweep, then new features: Threat Graph view (5th tab), file upload import, analyst notes, incidents CSV export + styling polish
+   151→
+   152→Work Log:
+   153→- STATUS: dev server healthy (200), DB intact (38 alerts / 8 incidents / INC-1001 analyzed). QA sweep at 1440x900 + 375x812 found only minor styling issues (KPI sub-label truncation at desktop, "Investigating" badge clipping in incident table, mobile brand truncation) — all fixed this round. No console errors, lint + tsc clean throughout.
+   154→- BUGFIX/STYLE 1 (command-center.tsx): KpiCard restructured — label+icon row on top, big number and sub-label now span full card width below. Desktop truncation ("30 corr…", "5 genui…", "3 low s…") eliminated; verified all six sub-labels fully visible at 1440px and 375px.
+   155→- BUGFIX/STYLE 2 (command-center.tsx): Incident table Title min-w-52→44, Threat Score min-w-36→32, Status/AI columns get pr-4/pr-3 — "Investigating" badge no longer clips at the table edge.
+   156→- BUGFIX/STYLE 3 (header.tsx): LiveClock hidden below sm breakpoint — "SentinelAI" brand no longer truncates to "Sentin…" on 375px screens.
+   157→- FEATURE 1 — THREAT GRAPH (5th tab, spec §15 nice-to-have "entity/attack-chain graph view"):
+   158→  * Contract: GraphNode/GraphLink/GraphData added to src/lib/types.ts (incidents inner ring, user/device/ip entities outer ring; entity severity = worst connected incident; ip nodes carry internal + malicious flags from threat-intel lists).
+   159→  * Backend: GET /api/graph — loads incidents(+alerts)+all alerts, tracks entity→incident membership incl. severities, dedupes entity↔incident links, returns stats {entityCount, incidentCount, linkCount, unlinkedAlerts}. Verified: 41 entities / 8 incidents / 25 links / 10 unlinked alerts.
+   160→  * Frontend: src/components/soc/tabs/threat-graph.tsx — deterministic radial "attack cluster" layout (pure SVG, no d3): incidents on inner ring sorted by severity rank, entities clustered angularly around their highest-priority incident with wide spread + 3-ring radial stagger to prevent label overlap, orphans on two outer rings. Node shapes by type: user=circle, device=rounded square, ip=rotated square (diamond); malicious IPs get red dashed spinning ring; incident node radius scales with threat score + drop-shadow glow; Critical incidents pulse.
+   161→  * Interactions: hover/focus highlights node + neighbors (edges thicken, rest dims to 15% opacity), live info box in card header (label, severity chip, malicious/internal badges, sublabel, node type); click (or Enter/Space — nodes are focusable g[role=button]) opens the incident in Analysis via soc-store.openIncident; entity-type filter chips (All/Users/Devices/IPs) hide nodes+links; severity + malicious-IP legend; stats bar; horizontally scrollable min-w-[760px] on mobile; skeleton/error/empty states.
+   162→  * Store/page/footer wiring: SocTab union + TAB_ORDER + keyboard shortcut 5; TAB_ITEMS icon=Waypoints; footer kbd hints now [1][2][3][4][5] "switch views".
+   163→  * Browser-verified: cluster layout correct (INC-1001 red w/ admin+server-01+2 malicious IPs; INC-1008 amber w/ svc-mkeller cluster), hover info box, click-through to Analysis, filter chips, mobile scroll.
+   164→- FEATURE 2 — FILE UPLOAD IMPORT (spec §15 nice-to-have "CSV upload"):
+   165→  * ImportPanel (threat-feed.tsx): hidden file input + "Choose file" button + drag-&-drop zone over the textarea (emerald "Drop file to load" overlay); file read client-side via file.text(), 2 MB guard, format auto-guessed from extension (.json/.csv/.tsv/.txt/.log) and applied to the format Select; filename chip with paperclip + remove button; textarea edit clears chip; onSuccess clears file+textarea. Browser-verified end-to-end: uploaded test-feed.csv → toast "Loaded test-feed.csv · 0.3 KB · format set to CSV" → Import Feed → "Imported 2 alerts · 0 failed" → FILE-001/FILE-002 in feed (40 alerts total).
+   166→- FEATURE 3 — ANALYST WORKING NOTES (completes F9 feedback loop; PATCH analystNote existed but had no UI):
+   167→  * DetailPane: "Analyst Working Notes" section under the action row — textarea (600 char, live 0/600 counter), Save Note (disabled while pending/empty), Clear draft; onSuccess toast "Analyst note saved", invalidates incident/incidents/summary queries. Note renders in Analyst Explanation card as "[Analyst] …" and is preserved by LLM re-analysis per route contract. Browser-verified round-trip on INC-1001.
+   168→- FEATURE 4 — INCIDENTS CSV EXPORT:
+   169→  * Priority Incidents card header gets "Export CSV" button: fetches /api/incidents (all, not just top 5), builds escaped CSV (12 columns incl. classification/status/analyzed/sources/timestamps), downloads SentinelAI-incidents-YYYY-MM-DD.csv, toasts count. Browser-verified: "Exported 8 incidents to CSV", file content spot-checked.
+   170→- Checks: bun run lint clean; bunx tsc --noEmit clean for src/ (pre-existing examples//skills/ errors out of scope); zero browser console errors; dev.log shows all 200s (GET /api/graph 200 ~20ms).
+   171→- Data state: 40 alerts / 8 incidents (INC-1001 analyzed, Investigating, Genuine Threat + analyst note) + FILE-001/FILE-002 imported uncorrelated. Simulation OFF.
+   172→
+   173→Stage Summary:
+   174→- All 4 spec §15 nice-to-haves now complete: BLUF export (.txt, round 2), live threat simulation (round 2), entity/attack-chain graph (round 3), CSV file upload (round 3). PDF export remains the only unimplemented nice-to-have (report .txt + copy + CSV export cover the export story; browser print-to-PDF available natively).
+   175→- 5 SOC views: Command Center (KPIs/charts/table+export), Threat Feed (search/filter/upload/paste import), Threat Graph (NEW: entity↔incident clusters), Incident Analysis (score/timeline/MITRE/BLUF/notes), AI Copilot.
+   176→- Keyboard: 1-5 switch views; footer hints updated; shortcuts correctly ignored while typing in inputs/notes.
+   177→- Remaining ideas for next round: PDF report export (jsPDF or print stylesheet), graph pan/zoom + edge click metadata, saved filter presets, alert acknowledge/claim workflow, per-user audit trail on notes (currently generic "[Analyst]").
+   178→- Risks: none known. /api/graph is read-only; graph layout is deterministic (pure function of data, no simulation drift between renders).
+   179→---
+   180→Task ID: r4 (webDevReview round 4)
+   181→Agent: Z.ai Code (main)
+   182→Task: Scheduled review — status assessment + QA sweep, then feature round: PDF export, alert acknowledge workflow, saved filter presets, graph pan/zoom + label collision fix, tab persistence
+   183→
+   184→Work Log:
+   185→- STATUS ASSESSMENT: dev server healthy (200), lint + tsc clean, DB intact (40 alerts / 8 incidents / INC-1001 analyzed). Full agent-browser QA sweep at 1440x900 + 375x812 across all 5 tabs: zero console errors, all flows functional. Verdict: phase stable → proceeded to new feature development (no blocking bugs found).
+   186→- FEATURE 1 — PDF REPORT EXPORT (spec §15 last remaining nice-to-have, NOW COMPLETE):
+   187→  * bun add jspdf; src/lib/report-pdf.ts builds a 2-page A4 report: dark cover band (incident id + severity pill + severity-colored accent), meta key/value grid, 7 numbered sections (BLUF, MITRE, Risk Signals, Analyst Explanation, Recommended Actions, Key Evidence, Alert Timeline), auto page breaks with "(continued)" strips, per-page footer + page numbers. Dynamically imported from BlufReport ("Report .pdf" button next to "Report .txt", Loader2 busy state, toasts) so jsPDF stays out of the initial bundle.
+   188→  * Fixed 2 layout bugs found in browser verification: MITRE tactic column overflow past right margin (char-capped with ellipsis) and related-alerts source list mid-word clip ("Firewall, SIEM Platform +2 more").
+   189→  * Browser-verified end-to-end via download: valid 2-page PDF, saved sample to /home/z/my-project/download/SentinelAI-report-INC-1001.pdf.
+   190→- FEATURE 2 — ALERT ACKNOWLEDGE / TRIAGE WORKFLOW:
+   191→  * Schema: Alert.acknowledged Boolean @default(false) + acknowledgedAt DateTime? (db:push done).
+   192→  * API: PATCH /api/alerts/[id] (accepts db cuid or alertId, 400 on bad body, 404 unknown), GET /api/alerts?ack=ack|unack filter, DashboardSummary.counts.unacknowledgedAlerts. AlertDTO.acknowledged added to contract.
+   193→  * Feed UI: trailing "Ack" column with per-row toggle button (Check → CheckCheck, pending spinner), acknowledged rows dimmed (opacity-55) with ACK chip next to alert id, "Hide acked" switch, amber "N awaiting triage" counter chip in the status row.
+   194→  * Browser-verified: ack FILE-001/002 → 40→38 counter, dimming + ACK chips, hide-acked filter (38 in view), un-ack works.
+   195→- FEATURE 3 — SAVED FEED FILTER PRESETS:
+   196→  * localStorage "sentinelai.feedPresets" (SSR-guarded lazy init), Bookmark dropdown: "Save current filters…" opens naming Dialog (shows live filter summary, Enter to save, same-name overwrites), preset rows show filter summary + hover delete, active preset auto-detected (emerald badge in dropdown + chip in status row).
+   197→  * Browser-verified: saved "Unacked critical" preset, toggled filters off, re-applied from dropdown → filters + active chip restored, toast confirmation.
+   198→- FEATURE 4 — THREAT GRAPH PAN/ZOOM + LABEL COLLISION FIX:
+   199→  * viewBox-based zoom (55%..300%): +/- buttons, wheel-zoom toward cursor (non-passive listener), drag-to-pan with pointer capture, reset button, live zoom % readout; drag vs click disambiguation (didPanRef suppresses node click after pan). Hint text: "click a node to open its incident · drag to pan · scroll or +/- to zoom".
+   200→  * resolveLabelCollisions(): deterministic post-pass in computeLayout — nudges overlapping entity labels apart (axis-dominant push, 40 passes max) inside a ring-band clamp; incident nodes fixed. Fixed the ws-4001/ws-2214 label overlap seen in QA; all 41 entity labels verified readable.
+   201→  * BUGFIX: setPointerCapture/releasePointerCapture wrapped in try/catch (throws "No active pointer" for synthetic/edge-case pointers — found via dev overlay after scripted pan test).
+   202→- FEATURE 5 — ACTIVE TAB PERSISTENCE: localStorage "sentinelai.activeTab"; restored once post-hydration in Page (loadSavedTab) to avoid SSR markup mismatch; setActiveTab/openIncident/askQuestion all persist. Browser-verified: reload on Graph/Analysis restores the tab, zero hydration errors.
+   203→- OPS notes: dev server had stale Prisma client (schema push after server start) → Unknown argument `acknowledged` 500; fixed by clean restart; later Turbopack persistent cache corrupted after kill -9 (sst restore error) → fixed by rm -rf .next + restart. NOTE for future agents: after prisma db:push, restart the dev server; if Turbopack throws sst errors, wipe .next. Start detached via `(setsid bun run dev >> dev.log 2>&1 < /dev/null &)` so it survives the tool-call shell.
+   204→- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; fresh-context browser console: 0 errors across all 5 tabs; dev.log clean.
+   205→
+   206→Stage Summary:
+   207→- Spec §15 nice-to-haves: ALL 5 complete (live simulation, .txt report, CSV upload, entity graph, PDF export).
+   208→- 5 SOC views + ack triage workflow + presets + pan/zoom graph + persistent tab state. DB: 40 alerts / 8 incidents / 38 unacked / 1 analyzed; simulation OFF.
+   209→- Remaining ideas: acknowledge-all button + bulk actions, alert detail drawer, PDF for ALL incidents (bundle export), graph edge-click metadata, per-user audit trail on notes, drag node repositioning.
+   210→- Risks: none known. jsPDF only in a lazy chunk (~0 impact on initial load). Ack/presets are additive schema/storage changes; no auth model (demo MVP).
+   211→---
+   212→Task ID: r5 (webDevReview round 5 — RECONSTRUCTED: work found uncommitted-in-flight, verified + logged by r6)
+   213→Agent: Z.ai Code (main)
+   214→Task: (previous session, unlogged) Bulk ack workflow + alert detail drawer + analyst identity audit trail
+   215→
+   216→Work Log (reconstructed by r6 from code inspection + browser verification):
+   217→- FEATURE 1 — BULK ACK/SELECT: table checkbox column ("Select all visible alerts" header + per-row), bulk triage toolbar ("N selected" + Acknowledge selected/Clear), POST /api/alerts/bulk-ack (accepts cuids or alertIds, updateMany, MAX 500).
+   218→- FEATURE 2 — ALERT DETAIL DRAWER (alert-drawer.tsx): right Sheet with alertId + raw severity + ACK badge, entities grid (user/device/ip), description, correlation status (linked → "Open in Incident Analysis" deep-link; uncorrelated explainer), raw metadata JSON viewer, footer Ack toggle + Copy JSON. Wired from row click in Threat Feed (checkbox clicks stopPropagation'd — verified NOT opening drawer).
+   219→- FEATURE 3 — ANALYST IDENTITY AUDIT TRAIL: localStorage "sentinelai.analystName" + identity input beside notes; PATCH /api/incidents/[id] stamps notes as "[name · timestamp] …" (defaults "Analyst").
+   220→- r6 VERIFICATION (browser QA): select-all → 40 acked → summary unacked 40→0 → bulk-clear → re-ack FILE-001/002 (state restored to 38 unacked); drawer round-trip on FILE-001 (uncorrelated view) + correlated alert (INC-1008 "Open in Incident Analysis" deep-link works, tab persisted); lint + tsc clean; zero console errors.
+   221→
+   222→Stage Summary:
+   223→- r5 features all functional and now officially logged. Data state restored to 40 alerts / 8 incidents / 38 unacked / INC-1001 analyzed.
+   224→---
+   225→Task ID: r6 (webDevReview round 6)
+   226→Agent: Z.ai Code (main)
+   227→Task: Scheduled review — QA sweep, then: ⌘K Command Palette, graph edge-click metadata, correlator state-preservation fix, Copilot context strip
+   228→
+   229→Work Log:
+   230→- STATUS: QA sweep at 1440x900 + 375x812 across all 5 tabs — zero console errors, all flows functional. Phase stable → feature work.
+   231→- QA FIX: removed the no-op "Dismiss feedback" X button from the Analysis action row (dead UI, did nothing) + dropped unused X import.
+   232→- FEATURE 1 — ⌘K COMMAND PALETTE (src/components/soc/command-palette.tsx, wired in page.tsx + header.tsx):
+   233→  * Global ⌘K / Ctrl+K shortcut (zustand store shared by header trigger button + keydown listener); groups: Go to view (tabs 1-5 shortcuts), Open investigation (all incidents live-fetched only while open, sorted by threat score, severity dots), Ask the copilot (4 canned questions via askQuestion), Actions (Load Demo Dataset, Run Correlation Pipeline, Open Copilot free-form).
+   234→  * Header gains "Quick jump… ⌘K" pill button; footer hints now show [1-5] switch views · ⌘K quick jump.
+   235→  * Browser-verified: ⌘K opens; INC-1008 click jumps to Analysis with incident selected; correlation action fired end-to-end (toast "30 alerts grouped → 8 incidents").
+   236→- FEATURE 2 — GRAPH EDGE-CLICK METADATA (threat-graph.tsx):
+   237→  * Invisible 14px hit-path over every edge (25 rendered); click selects the relationship (didPan-guarded), Esc / X / re-click clears.
+   238→  * Selected edge: thicker+full opacity, others dim to 0.08; header info box swaps to LinkInfoBox (entity → incident, severity chip, alert count); evidence strip under canvas shows backing alert ids (sampleAlertIds chips + "+N more") and an "Open investigation" deep-link button — verified jump to INC-1001.
+   239→  * Escape-clear useEffect placed BEFORE early returns (hooks-order correctness); hint text updated.
+   240→- BUGFIX (MAJOR) — CORRELATOR STATE PRESERVATION (src/lib/correlator.ts):
+   241→  * runCorrelation previously deleteMany'd ALL incidents — re-correlation wiped LLM analysis, BLUF, analyst notes, status and classification (exposed by the new palette action).
+   242→  * Now snapshots per-incident analyst state keyed by sorted alert-id set before rebuild; groups with identical alert membership carry over analyzed/bluf/explanation/status/classification; changed groups recompute fresh.
+   243→  * Verified: INC-1001 set to Investigating → re-correlate → status+classification preserved ("created 0 seconds ago" but state intact); dev.log line "[correlator] preserved analyst state for 8 unchanged incident group(s)". INC-1001 then re-analyzed via LLM to restore demo state (95, Investigating, Genuine Threat).
+   244→- FEATURE 3 — COPILOT CONTEXT STRIP (ai-copilot.tsx): live chips under the header (N open / total incidents, genuine threats, awaiting triage, ai-analysed, data as of …) — grounds the chat visually; fixed "1 hour ago ago" duplication (timeAgo already includes "ago").
+   245→- CONFIRMED (was unlogged r5 in-flight work, now verified): downloadBriefingPackPdf exists in report-pdf.ts + "Briefing .pdf" button on Command Center — browser download test produced valid 12KB PDF (cover exec summary + severity distribution bar + prioritised register + per-incident detail cards). The worklog "remaining ideas" item "PDF for ALL incidents" is therefore DONE.
+   246→- Styling: deduped search icon in palette strip; palette footer hints (↑↓ navigate · ↵ select · ⌘K palette).
+   247→- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero console errors after fresh reload + 1-5 sweep; mobile 375px verified (Copilot strip wraps, header fits).
+   248→
+   249→Stage Summary:
+   250→- New: ⌘K command palette, edge-click relationship evidence, analyst-state-preserving re-correlation, Copilot context strip.
+   251→- DB: 40 alerts / 8 incidents / 38 unacked / INC-1001 analyzed+Investigating+Genuine Threat; simulation OFF.
+   252→- Remaining ideas: custom IOC watchlist UI (static intel lists today), incident case-activity/audit log, drag node repositioning, feed pagination for large datasets.
+   253→- Risks: none known. Correlator preservation is exact-match only (group membership changes → fresh rebuild, documented).
+   254→---
+   255→Task ID: r7 (webDevReview round 7)
+   256→Agent: Z.ai Code (main)
+   257→Task: Scheduled review — log r6 (was unlogged), QA sweep, then new features: IOC Watchlist + Case Activity audit trail + correlator preservation v2
+   258→
+   259→Work Log:
+   260→- HOUSEKEEPING: r6 session had ended before logging — appended the full r6 entry to worklog.md first (palette, edge-click, correlator preservation v1, Copilot context strip).
+   261→- STATUS/QA: server healthy (200) after schema push + dev-server restart (per r4 ops note: db:push → restart; wiped .next). Browser sweep 1440x900 + 375x812, zero console errors → stable → feature work.
+   262→- FEATURE 1 — IOC WATCHLIST (analyst-curated threat intel, DB-backed):
+   263→  * Schema: WatchlistItem { id, type ip|domain|hash, value unique, note, createdAt } (db:push done).
+   264→  * Runtime intel merge: threat-intel.ts gains extraIps/Domains/Hashes sets + isMaliciousIp/Domain/Hash + getMaliciousIps(); new src/lib/watchlist.ts refreshIntel() loads DB watchlist into those sets with a 5s cache (never throws — stale sets on failure).
+   265→  * Wired into ALL IOC consumers: correlator (pairScore +5 signal), scorer (known-malicious-IOC +25 signal), normalizer (iocMatch metadata on ingest), /api/graph (red node + dashed ring), simulator (picks analyst IPs for C2 alerts). refreshIntel() called at top of runCorrelation / graph GET / simulateOneAlert.
+   266→  * API: GET/POST /api/watchlist (validation: IPv4 regex, domain regex + lowercase, hex hash 8-64; 409 on duplicate; value ≤200 chars) + DELETE /api/watchlist/[id] (by cuid or value).
+   267→  * UI: WatchlistCard on Command Center (between charts and Priority Incidents) — type Select + mono input + Add button, entry rows (type icon, value, type chip, timeAgo, hover-reveal delete), count chip, dashed empty state, skeleton. Browser-verified: added 203.0.113.66 → toast → re-correlate via palette → INC-1007 score 15→40 (+25 known-malicious IOC) and graph node now red with dashed spinning ring.
+   268→- FEATURE 2 — CASE ACTIVITY AUDIT TRAIL (IncidentEvent):
+   269→  * Schema: IncidentEvent { incidentId FK cascade, kind status|classification|note|analysis|created, actor, detail, createdAt } + @@index([incidentId, createdAt]).
+   270→  * Recording: PATCH /api/incidents/[id] logs classification/status changes (with from → to) and notes (truncated 120 chars, actor from body.analyst); /analyze logs "AI analysis — score X/100, classification, confidence Y%" as actor SentinelAI (best-effort, never breaks the request).
+   271→  * Contract: IncidentEventDTO + IncidentDetailDTO.events (newest first, 15 cap); detail GET/PATCH/analyze now include events in the incident query.
+   272→  * UI: CaseActivity card in Analysis (between timeline grid and BLUF report) — vertical timeline with connector lines, per-kind icon/color (status sky, classification emerald, note amber, analysis emerald, created red), kind chip, actor + timeAgo. Hidden when empty.
+   273→- BUGFIX (correlator preservation v2): v1 preserved bluf/explanation/status/classification/analyzed but recomputed title/severity/threatScore/confidence → LLM-refined titles were lost on re-correlation. Snapshot now also carries title/severity/threatScore/confidence/events; analyzed incidents keep the FULL LLM refinement, unanalyzed ones recompute deterministically. Audit events are snapshotted and re-created on the rebuilt row (original createdAt kept) instead of being cascade-deleted.
+   274→  * Verified: re-analyzed INC-1001 (LLM title "Admin Account Compromise with Data Exfiltration", 95) → re-correlate → title/score/analysis preserved AND Case Activity still shows both events; dev.log "[correlator] preserved analyst state for 8 unchanged incident group(s)".
+   275→- STYLING: watchlist delete button visible on touch devices (opacity-100 below sm, hover-reveal on sm+); watchlist form stacks vertically on mobile.
+   276→- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero browser console errors after fresh reload + 1-5 tab sweep; watchlist API returns items; dev.log shows only transient mid-edit Fast Refresh 500s, current requests all 200.
+   277→
+   278→Stage Summary:
+   279→- New capabilities: analyst IOC watchlist (scoring + correlation + graph + simulator integration), per-incident case-activity audit trail, full LLM-refinement preservation across re-correlation.
+   280→- DB state: 40 alerts / 8 incidents; INC-1001 analyzed (95, "Admin Account Compromise with Data Exfiltration"), status Contained, 2 audit events; watchlist: 203.0.113.66; simulation OFF.
+   281→- Remaining ideas: watchlist bulk paste (CSV of IOCs), watchlist hit counters (how many alerts matched each IOC), severity/status filters on Command Center table, drag node repositioning, feed pagination.
+   282→- Risks: none known. Watchlist validation is client-trusted demo level (IPv4 only, no IPv6/CIDR); events capped at 15 in DTO.
+   283→---
+   284→Task ID: r8 (webDevReview round 8)
+   285→Agent: Z.ai Code (main)
+   286→Task: Scheduled review — QA sweep, then: Watchlist bulk paste + hit counters, Command Center incident filters, keyboard-shortcuts help dialog, styling polish (KPI micro-interactions, severity stripes, mobile overflow fix)
+   287→
+   288→Work Log:
+   289→- STATUS/QA: dev server healthy, lint + tsc clean, DB intact (40 alerts / 8 incidents / INC-1001 analyzed). agent-browser sweep at 1440x900 + 375x812 across all 5 tabs found ONE QA issue: 18px horizontal overflow at 375px viewport — the Priority Incidents header button group (Briefing .pdf / Export CSV, `shrink-0`) overflowed. Fixed this round. No console errors → stable → feature work.
+   290→- QA FIX — MOBILE OVERFLOW (command-center.tsx): header row now `flex-wrap items-start`; export buttons get icon-only mode below sm (labels `hidden sm:inline` + `sr-only sm:hidden`, title + aria-label kept); verified scrollWidth 375 == innerWidth 375.
+   291→- FEATURE 1 — WATCHLIST BULK PASTE (r7 remaining idea #1):
+   292→  * Shared parser src/lib/watchlist-parse.ts (used by dialog preview AND route so counts always match): per line `type,value` (verified against claimed type) or bare value with auto-detection (IPv4 → ip, hex 8-64 → hash, else domain); `1.2.3.4,comment` and `comment,1.2.3.4` both handled (first auto-detectable column wins); `#`/`//` comments + blanks ignored; in-paste dedupe; 200-line cap; skipped lines carry {line, reason}.
+   293→  * Backend POST /api/watchlist/bulk: parses, dedupes against DB (one findMany `value in [...]`), creates in a transaction with note "bulk import", refreshIntel() once; returns {added, duplicatesCount, duplicates[≤25], items, message}. Edge cases verified: empty text → 400; already-on-list → counted as skipped with reason; repeat paste → "Imported 0 indicators · 1 skipped".
+   294→  * UI (watchlist-card.tsx): "Bulk paste" button in card header → Dialog with mono textarea, format hint, "insert sample" link, live preview chips ("N valid" emerald / "M skipped" muted, hover title lists reasons), skipped-reasons panel (amber, max 8 shown), Import button disabled at 0 valid with busy spinner; result toast includes skipped breakdown.
+   295→  * Browser-verified end-to-end: pasted 6 lines (CIDR + garbage + dup + comment + valid ip + valid hash) → "2 valid / 3 skipped" preview → "Imported 2 indicators (1 ip, 1 hash) · 3 skipped" → rows appear, coverage updates.
+   296→- FEATURE 2 — WATCHLIST HIT COUNTERS (r7 remaining idea #2):
+   297→  * GET /api/watchlist now scans all alerts (ip column + metadata/description text, case-insensitive for domain/hash) and returns per-item `hits` + stats {itemCount, totalHits, itemsWithHits, lastAddedAt} (WatchlistHitStats in types.ts; WatchlistItemDTO.hits).
+   298→  * UI: per-row Crosshair chip (red when >0, muted 0) with title tooltip; "coverage" stat strip under the header (N indicators · X alert hits · Y/Z matched) — hit chip glows red when totalHits > 0; list refetches every 30s so counters track new alerts.
+   299→  * Verified counts against DB directly: 198.51.100.7 → FILE-001/FILE-002 (2 hits), hash → 0, 203.0.113.66 → 3; stats totals match exactly.
+   300→- FEATURE 3 — COMMAND CENTER INCIDENT FILTERS (r7 remaining idea #3):
+   301→  * FilterChipRow segmented chips with per-option counts (zero-count options disabled): SEVERITY (All/Critical/High/Medium/Low/FP), STATUS (All/Open/Investigating/Contained/Resolved), VERDICT (Any/Genuine/False positive/Under review); client-side over the ranked table; live "N of M shown" (emerald when filtering) + "Clear" button + dedicated no-match empty state with recovery button; a11y: role=group + aria-pressed + aria-live.
+   302→  * Browser-verified: Critical → 1 row ("1 of 5 shown"); Critical+Genuine combined → 1 row; Clear → 5 rows; Critical+Open → empty state + "Clear filters" recovery works.
+   303→- FEATURE 4 — KEYBOARD SHORTCUTS HELP DIALOG:
+   304→  * soc-store: shortcutsOpen/setShortcutsOpen; new src/components/soc/shortcuts-dialog.tsx (grouped Navigation/Global/Tables & graph lists with kbd chips); page.tsx "?" key opens (input/textarea/select/contentEditable-safe, modifier-safe); footer gains clickable [?] SHORTCUTS hint button. Verified: "?" opens, footer button opens, Esc closes.
+   305→- STYLING (mandatory polish):
+   306→  * KPI cards: hover lift (-translate-y-px) + soft shadow + icon scale-105 micro-interaction; big numbers now animate on change (keyed motion.span, y+fade 0.3s, aria-live=polite) — visible when simulation or polling updates counts.
+   307→  * Incident rows: 2px severity-colored inset stripe on the left edge (severityStyle hex: red/amber/yellow/emerald/slate) — instant severity scanning aligned with badge colors.
+   308→  * Watchlist: coverage strip + hit chips styled as above; Bulk paste button matches header outline style.
+   309→  * Filter chips: emerald glow (shadow ring) when active, hover tint, count pill inside chip.
+   310→- BUGFIX (self-inflicted, caught by QA): while rewriting /api/watchlist/route.ts for hit counters I accidentally dropped the POST handler → 405 on single add (UI + curl). Restored POST (validation, 409 dup, refreshIntel) + missing validateWatchlistEntry import; browser-verified single-add round-trip (toast + row + 409 dup + cleanup).
+   311→- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero browser console errors after fresh reload + 1-5 sweep; recent dev.log all 200s; mobile 375px no overflow.
+   312→
+   313→Stage Summary:
+   314→- New capabilities: bulk IOC paste (dialog + shared parser + bulk route), per-IOC alert hit counters + coverage stats, Command Center incident table filters (severity/status/verdict with counts), keyboard-shortcuts help ("?" / footer), animated KPI values + severity row stripes.
+   315→- r7 "remaining ideas" progress: bulk paste DONE, hit counters DONE, CC severity/status filters DONE. Still open: drag node repositioning (graph), feed pagination (server limit support exists; 40-alert demo doesn't need it).
+   316→- DB state: 40 alerts / 8 incidents (INC-1001 analyzed, Contained) / watchlist 3 items (5 total hits) / 38 unacked; simulation OFF.
+   317→- Risks: none known. Hit counting is substring-based on metadata/description (fine at demo scale; a domain could theoretically substring-match a longer hostname — acceptable for MVP, could be tightened later).
+   318→- Next-phase suggestions: graph drag-node repositioning, watchlist IOC type filters/sort, alert-drawer "copy IOC to watchlist" shortcut, e2e smoke script of the 5 core flows.
+   319→

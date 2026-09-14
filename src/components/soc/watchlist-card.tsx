@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
+  ArrowDownWideNarrow,
   Crosshair,
   Fingerprint,
   Globe,
@@ -56,6 +57,22 @@ const SAMPLE_PASTE = `# one IOC per line — type auto-detected, or "type,value"
 domain,c2.bad-actor.example.net
 d41d8cd98f00b204e9800998ecf8427e`;
 
+type WatchTypeFilter = "all" | "ip" | "domain" | "hash";
+type WatchSort = "newest" | "hits" | "value";
+
+const TYPE_FILTERS: { value: WatchTypeFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "ip", label: "IPs" },
+  { value: "domain", label: "Domains" },
+  { value: "hash", label: "Hashes" },
+];
+
+const SORT_OPTIONS: { value: WatchSort; label: string }[] = [
+  { value: "newest", label: "Newest first" },
+  { value: "hits", label: "Most hits" },
+  { value: "value", label: "Value A–Z" },
+];
+
 /**
  * Analyst IOC Watchlist — add/remove custom malicious indicators.
  * Entries merge into the runtime intel feed: future correlations score them
@@ -68,6 +85,8 @@ export function WatchlistCard() {
   const [value, setValue] = useState("");
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState("");
+  const [typeFilter, setTypeFilter] = useState<WatchTypeFilter>("all");
+  const [sort, setSort] = useState<WatchSort>("newest");
 
   const listQuery = useQuery({
     queryKey: ["watchlist"],
@@ -76,6 +95,26 @@ export function WatchlistCard() {
   });
   const items = listQuery.data?.items ?? [];
   const stats = listQuery.data?.stats;
+
+  // client-side filter + sort (list is capped by the demo dataset scale)
+  const visibleItems = useMemo(() => {
+    const filtered = typeFilter === "all" ? items : items.filter((i) => i.type === typeFilter);
+    const sorted = [...filtered];
+    if (sort === "newest") {
+      sorted.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    } else if (sort === "hits") {
+      sorted.sort((a, b) => b.hits - a.hits || a.value.localeCompare(b.value));
+    } else {
+      sorted.sort((a, b) => a.value.localeCompare(b.value));
+    }
+    return sorted;
+  }, [items, typeFilter, sort]);
+
+  const typeCounts = useMemo(() => {
+    const c: Record<WatchTypeFilter, number> = { all: items.length, ip: 0, domain: 0, hash: 0 };
+    for (const i of items) c[i.type] += 1;
+    return c;
+  }, [items]);
 
   const invalidate = () =>
     void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
@@ -202,6 +241,60 @@ export function WatchlistCard() {
             </div>
           )}
 
+          {/* type filter chips + sort */}
+          {items.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by indicator type">
+                {TYPE_FILTERS.map((f) => (
+                  <button
+                    key={f.value}
+                    type="button"
+                    onClick={() => setTypeFilter(f.value)}
+                    aria-pressed={typeFilter === f.value}
+                    className={cn(
+                      "inline-flex min-h-7 items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider transition-colors",
+                      typeFilter === f.value
+                        ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300 shadow-[0_0_10px_oklch(0.72_0.149_163/15%)]"
+                        : "border-border bg-muted/40 text-muted-foreground hover:border-emerald-500/30 hover:text-foreground"
+                    )}
+                  >
+                    {f.label}
+                    <span
+                      className={cn(
+                        "rounded px-1 text-[9px]",
+                        typeFilter === f.value ? "bg-emerald-500/20 text-emerald-200" : "bg-background/60 text-muted-foreground"
+                      )}
+                    >
+                      {typeCounts[f.value]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="ml-auto flex items-center gap-1.5">
+                <ArrowDownWideNarrow className="size-3 text-muted-foreground/60" aria-hidden="true" />
+                <label htmlFor="watchlist-sort" className="sr-only">
+                  Sort indicators
+                </label>
+                <Select value={sort} onValueChange={(v) => setSort(v as WatchSort)}>
+                  <SelectTrigger
+                    id="watchlist-sort"
+                    className="h-7 w-[7.5rem] gap-1 border-border/70 bg-muted/40 px-2 text-[10px] uppercase tracking-wider text-muted-foreground"
+                    aria-label="Sort indicators"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SORT_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value} className="text-xs">
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
           {/* add form */}
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="sm:w-32">
@@ -265,12 +358,27 @@ export function WatchlistCard() {
             <p className="rounded-lg border border-dashed border-border bg-background/40 px-3 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
               watchlist empty — add your first indicator above
             </p>
+          ) : visibleItems.length === 0 ? (
+            <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border bg-background/40 px-3 py-3">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                no {typeFilter} indicators on the list
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="min-h-7 text-[11px] text-emerald-300 hover:text-emerald-200"
+                onClick={() => setTypeFilter("all")}
+              >
+                Show all {items.length}
+              </Button>
+            </div>
           ) : (
             <ul
               className="soc-scroll -mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto px-1"
               aria-label="Watchlist entries"
             >
-              {items.map((it) => (
+              {visibleItems.map((it) => (
                 <WatchlistRow
                   key={it.id}
                   item={it}

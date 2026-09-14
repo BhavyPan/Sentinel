@@ -544,6 +544,8 @@ function clampView(v: ViewState): ViewState {
 
 export function ThreatGraph() {
   const openIncidentRaw = useSocStore((s) => s.openIncident);
+  const graphFocusIncidentId = useSocStore((s) => s.graphFocusIncidentId);
+  const clearGraphFocus = useSocStore((s) => s.clearGraphFocus);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selectedLinkKey, setSelectedLinkKey] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -680,14 +682,21 @@ export function ThreatGraph() {
   }
   if (!data || data.nodes.length === 0) return <EmptyHero />;
 
-  const hoverNode = hoverId ? data.nodes.find((n) => n.id === hoverId) ?? null : null;
+  // incident pinned from the Analysis tab ("Threat Graph" cross-link):
+  // behaves like a persistent hover highlight until the analyst clears it
+  const focusNodeId = graphFocusIncidentId
+    ? data.nodes.find((n) => n.kind === "incident" && n.id === `inc:${graphFocusIncidentId}`)?.id ?? null
+    : null;
+  const activeId = hoverId ?? focusNodeId;
+
+  const hoverNode = activeId ? data.nodes.find((n) => n.id === activeId) ?? null : null;
   const selectedLink =
     data.links.find((l) => `${l.source}->${l.target}` === selectedLinkKey) ?? null;
 
   const isDimmed = (id: string): boolean => {
-    if (!hoverId) return false;
-    if (id === hoverId) return false;
-    return !(neighbors.get(hoverId)?.has(id) ?? false);
+    if (!activeId) return false;
+    if (id === activeId) return false;
+    return !(neighbors.get(activeId)?.has(id) ?? false);
   };
 
   const entityVisible = (n: GraphNode): boolean =>
@@ -757,6 +766,17 @@ export function ThreatGraph() {
             <span className="font-mono">{data.stats.linkCount} relationships</span>
             {data.stats.unlinkedAlerts > 0 && (
               <span className="font-mono text-amber-400/80">{data.stats.unlinkedAlerts} unlinked alerts</span>
+            )}
+            {focusNodeId && !hoverId && (
+              <button
+                type="button"
+                onClick={clearGraphFocus}
+                className="inline-flex min-h-6 items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-px font-mono text-[10px] font-bold text-sky-300 transition-colors hover:bg-sky-500/20"
+                title="Clear the pinned incident highlight"
+              >
+                focused: {hoverNode?.label}
+                <X className="size-3" aria-hidden="true" />
+              </button>
             )}
             <span className="ml-auto hidden items-center gap-1.5 md:flex">
               <MousePointerClick className="size-3.5" aria-hidden="true" />
@@ -870,9 +890,9 @@ export function ThreatGraph() {
                   const cx = mx + (CX - mx) * 0.22;
                   const cy = my + (CY - my) * 0.22;
                   const key = `${l.source}->${l.target}`;
-                  const active = hoverId === l.source || hoverId === l.target;
+                  const active = activeId === l.source || activeId === l.target;
                   const selected = selectedLinkKey === key;
-                  const dim = hoverId && !active;
+                  const dim = activeId && !active;
                   const hidden = !linkVisible(l.source, l.target);
                   const otherSelected = selectedLinkKey && !selected;
                   if (hidden) return null;
@@ -915,7 +935,7 @@ export function ThreatGraph() {
                         node={n}
                         x={p.x}
                         y={p.y}
-                        hovered={hoverId === n.id}
+                        hovered={activeId === n.id}
                         dimmed={isDimmed(n.id)}
                         onClick={() => openNode(n)}
                         onFocus={() => setHoverId(n.id)}
@@ -934,7 +954,7 @@ export function ThreatGraph() {
                         node={n}
                         x={p.x}
                         y={p.y}
-                        hovered={hoverId === n.id}
+                        hovered={activeId === n.id}
                         dimmed={isDimmed(n.id)}
                         onClick={() => openNode(n)}
                         onFocus={() => setHoverId(n.id)}

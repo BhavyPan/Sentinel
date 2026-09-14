@@ -69,3 +69,25 @@ export const EVENT_MITRE_RULES: { keywords: string[]; techniqueId: string }[] = 
 export function mitreById(id: string): MitreTechnique | undefined {
   return MITRE_TECHNIQUES.find((t) => t.id === id);
 }
+
+/**
+ * Canonical ATT&CK tactic progression (kill-chain order) used by the
+ * Incident Analysis kill-chain strip. Techniques may map to several tactics
+ * (their `tactic` field is comma-separated) — every listed tactic lights up.
+ */
+export const ATTACK_TACTIC_ORDER: string[] = [
+  "Reconnaissance",
+  "Resource Development",
+  "Initial Access",
+  "Execution",
+  "Persistence",
+  "Privilege Escalation",
+  "Defense Evasion",
+  "Credential Access",
+  "Discovery",
+  "Lateral Movement",
+  "Collection",
+  "Command and Control",
+  "Exfiltration",
+  "Impact",
+];

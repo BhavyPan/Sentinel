@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { motion } from "framer-motion";
 import { LayoutDashboard, Radio, Crosshair, Bot, Waypoints } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SocHeader } from "@/components/soc/header";
@@ -85,13 +86,23 @@ export default function Page() {
                 value={value}
                 aria-label={label}
                 className={cn(
-                  "min-h-11 flex-1 gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:flex-none sm:px-5 sm:text-sm",
-                  "data-[state=active]:bg-emerald-500/15 dark:data-[state=active]:bg-emerald-500/15",
-                  "data-[state=active]:text-emerald-300 dark:data-[state=active]:text-emerald-300",
-                  "data-[state=active]:border-emerald-500/40 dark:data-[state=active]:border-emerald-500/40",
-                  "data-[state=active]:shadow-none dark:data-[state=active]:shadow-none"
+                  "relative isolate min-h-11 flex-1 gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:flex-none sm:px-5 sm:text-sm",
+                  // the animated pill provides the active background — keep the
+                  // shadcn active-state bg/border/shadow neutralized
+                  "data-[state=active]:bg-transparent dark:data-[state=active]:bg-transparent",
+                  "data-[state=active]:shadow-none dark:data-[state=active]:shadow-none",
+                  "data-[state=active]:border-transparent dark:data-[state=active]:border-transparent",
+                  "data-[state=active]:text-emerald-300 dark:data-[state=active]:text-emerald-300"
                 )}
               >
+                {activeTab === value && (
+                  <motion.span
+                    layoutId="soc-tab-pill"
+                    aria-hidden="true"
+                    transition={{ type: "spring", stiffness: 480, damping: 42 }}
+                    className="absolute inset-0 -z-10 rounded-lg border border-emerald-500/40 bg-emerald-500/15 shadow-[inset_0_1px_0_oklch(1_0_0/6%)]"
+                  />
+                )}
                 <Icon className="size-4 shrink-0" aria-hidden="true" />
                 <span className="hidden sm:inline">{label}</span>
                 <span className="sr-only sm:hidden">{label}</span>

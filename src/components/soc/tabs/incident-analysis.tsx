@@ -24,6 +24,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   UserRound,
+  Waypoints,
 } from "lucide-react";
 import {
   Card,
@@ -50,6 +51,7 @@ import {
 } from "@/components/soc/badges";
 import { ScoreGauge } from "@/components/soc/threat-score";
 import { ErrorState } from "@/components/soc/error-state";
+import { ATTACK_TACTIC_ORDER } from "@/lib/mitre-data";
 import { apiGet, apiSend } from "@/lib/api-client";
 import type {
   Classification,
@@ -273,6 +275,88 @@ function AttackTimeline({ incident }: { incident: IncidentDetailDTO }) {
 // MITRE mapping
 // ----------------------------------------------------------------------
 
+/**
+ * Kill-chain progression strip: the 14 canonical ATT&CK tactics in order,
+ * lit up when the incident's mapped techniques touch them.
+ */
+function KillChainStrip({ incident }: { incident: IncidentDetailDTO }) {
+  const byTactic = new Map<string, string[]>();
+  for (const t of incident.mitre ?? []) {
+    for (const raw of t.tactic.split(",")) {
+      const tactic = raw.trim();
+      if (!tactic) continue;
+      const list = byTactic.get(tactic) ?? [];
+      list.push(t.id);
+      byTactic.set(tactic, list);
+    }
+  }
+  const hitStages = ATTACK_TACTIC_ORDER.filter((t) => byTactic.has(t)).length;
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-background/40 p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          kill chain progression
+        </span>
+        <span
+          className={cn(
+            "rounded-full border px-1.5 py-px font-mono text-[10px] font-bold",
+            hitStages > 0
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+              : "border-border bg-muted/40 text-muted-foreground"
+          )}
+          aria-live="polite"
+        >
+          {hitStages}/{ATTACK_TACTIC_ORDER.length} stages observed
+        </span>
+        <span className="ml-auto hidden font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60 sm:inline">
+          hover a stage for mapped techniques
+        </span>
+      </div>
+      <ol
+        className="mt-2 flex flex-wrap gap-1"
+        aria-label="MITRE ATT&CK tactic progression"
+      >
+        {ATTACK_TACTIC_ORDER.map((tactic, i) => {
+          const ids = byTactic.get(tactic);
+          const active = Boolean(ids?.length);
+          return (
+            <motion.li
+              key={tactic}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, delay: Math.min(i * 0.03, 0.4) }}
+            >
+              <span
+                title={
+                  active
+                    ? `${tactic} — ${ids!.join(", ")}`
+                    : `${tactic} — no techniques mapped`
+                }
+                className={cn(
+                  "flex cursor-default items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] leading-none transition-colors",
+                  active
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200 shadow-[0_0_10px_oklch(0.72_0.149_163/12%)]"
+                    : "border-border/60 bg-muted/30 text-muted-foreground/45"
+                )}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    active ? "bg-emerald-400" : "bg-muted-foreground/30"
+                  )}
+                />
+                {tactic}
+              </span>
+            </motion.li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 function MitrePanel({ incident }: { incident: IncidentDetailDTO }) {
   const techniques = incident.mitre ?? [];
   return (
@@ -282,30 +366,36 @@ function MitrePanel({ incident }: { incident: IncidentDetailDTO }) {
           <Crosshair className="size-4 text-emerald-400" aria-hidden="true" />
           MITRE ATT&amp;CK Mapping
         </CardTitle>
+        <CardDescription className="text-xs">
+          Techniques observed across the correlated alerts, ordered by attack-stage.
+        </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-3">
         {techniques.length === 0 ? (
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <Sparkles className="size-3.5 text-amber-400" aria-hidden="true" />
             No techniques mapped yet — run AI analysis.
           </p>
         ) : (
-          <ul className="flex flex-wrap gap-2">
-            {techniques.map((t) => (
-              <li
-                key={t.id}
-                title={`${t.id} — ${t.name} (${t.tactic})`}
-                className="rounded-lg border border-border bg-muted/50 px-2.5 py-1.5"
-              >
-                <span className="block font-mono text-xs font-semibold text-emerald-300/90">
-                  {t.id} · {t.name}
-                </span>
-                <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {t.tactic}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <>
+            <KillChainStrip incident={incident} />
+            <ul className="flex flex-wrap gap-2">
+              {techniques.map((t) => (
+                <li
+                  key={t.id}
+                  title={`${t.id} — ${t.name} (${t.tactic})`}
+                  className="rounded-lg border border-border bg-muted/50 px-2.5 py-1.5"
+                >
+                  <span className="block font-mono text-xs font-semibold text-emerald-300/90">
+                    {t.id} · {t.name}
+                  </span>
+                  <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {t.tactic}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </CardContent>
     </Card>
@@ -589,6 +679,7 @@ function loadAnalystName(): string {
 
 function DetailPane({ incidentId }: { incidentId: string }) {
   const queryClient = useQueryClient();
+  const focusIncidentInGraph = useSocStore((s) => s.focusIncidentInGraph);
 
   const detailQuery = useQuery({
     queryKey: ["incident", incidentId],
@@ -763,6 +854,18 @@ function DetailPane({ incidentId }: { incidentId: string }) {
               </div>
 
               <div className="ml-auto flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 gap-1.5 border-sky-500/40 text-sky-300 hover:bg-sky-500/10 hover:text-sky-200"
+                  onClick={() => focusIncidentInGraph(incident.id)}
+                  aria-label="Show this incident in the Threat Graph"
+                  title="Pin this incident in the Threat Graph view"
+                >
+                  <Waypoints className="size-3.5" aria-hidden="true" />
+                  Threat Graph
+                </Button>
                 <Button
                   type="button"
                   variant="outline"

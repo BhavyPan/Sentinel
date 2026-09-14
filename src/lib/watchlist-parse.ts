@@ -128,3 +128,48 @@ export function parseIocText(text: string, maxLines = 200): ParseIocTextResult {
   }
   return { parsed, skipped };
 }
+
+const IPV4_GLOBAL = /\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b/g;
+const DOMAIN_GLOBAL = /\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\b/gi;
+const HASH_GLOBAL = /\b[a-f0-9]{8,64}\b/gi;
+
+/**
+ * Extract candidate IOCs (ip / domain / hash) from free text — used by the
+ * alert detail drawer ("Indicators of Compromise" quick-add chips).
+ * IPs are matched first and removed from the text so the (looser) domain
+ * regex cannot re-match them; hashes must be hex-only tokens.
+ */
+export function extractIocs(text: string, cap = 6): { type: BulkIocType; value: string }[] {
+  if (!text) return [];
+  const out: { type: BulkIocType; value: string }[] = [];
+  const seen = new Set<string>();
+  const push = (type: BulkIocType, value: string) => {
+    const norm = type === "ip" ? value : value.toLowerCase();
+    if (!seen.has(norm) && out.length < cap) {
+      seen.add(norm);
+      out.push({ type, value: norm });
+    }
+  };
+
+  const ips = text.match(IPV4_GLOBAL) ?? [];
+  let rest = text.replace(IPV4_GLOBAL, " ");
+
+  for (const m of rest.matchAll(HASH_GLOBAL)) {
+    const v = m[0];
+    // skip hex tokens that are really words (e.g. "deadbeef" ok, "cafebabe" ok — both valid IOC forms)
+    if (v.length >= 8) push("hash", v);
+  }
+  rest = rest.replace(HASH_GLOBAL, " ");
+
+  for (const m of rest.matchAll(DOMAIN_GLOBAL)) {
+    const v = m[0];
+    // require a plausible TLD (2+ alpha chars) and at least one dot
+    const tld = v.slice(v.lastIndexOf(".") + 1);
+    if (v.includes(".") && /^[a-z]{2,}$/i.test(tld) && !/^\d+$/.test(v.split(".")[0] ?? "")) {
+      push("domain", v);
+    }
+  }
+
+  for (const ip of ips) push("ip", ip);
+  return out;
+}

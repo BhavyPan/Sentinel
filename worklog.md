@@ -316,3 +316,39 @@ Stage Summary:
 - DB state: 40 alerts / 8 incidents (INC-1001 analyzed, Contained) / watchlist 3 items (5 total hits) / 38 unacked; simulation OFF.
 - Risks: none known. Hit counting is substring-based on metadata/description (fine at demo scale; a domain could theoretically substring-match a longer hostname — acceptable for MVP, could be tightened later).
 - Next-phase suggestions: graph drag-node repositioning, watchlist IOC type filters/sort, alert-drawer "copy IOC to watchlist" shortcut, e2e smoke script of the 5 core flows.
+---
+Task ID: r9 (webDevReview round 9)
+Agent: Z.ai Code (main)
+Task: Scheduled review — QA sweep (stable → feature round): alert-drawer IOC quick-add, watchlist type filters + sort, MITRE kill-chain progression strip, Analysis→Graph cross-link focus, animated tab pill + a11y styling
+
+Work Log:
+- STATUS/QA: dev server healthy (200), lint + tsc clean, DB intact (40 alerts / 8 incidents / INC-1001 analyzed 95 / watchlist 3 items). agent-browser sweep at 1440x900 + 375x812 across all 5 tabs: zero console errors, no horizontal overflow (sw==iw==375), all flows functional. Verdict: stable → feature development (no bugs found).
+- FEATURE 1 — ALERT DRAWER "INDICATORS OF COMPROMISE" quick-add (r8 remaining idea "copy IOC to watchlist"):
+  * src/lib/watchlist-parse.ts gains extractIocs(text, cap=6) — client-safe IOC extraction: IPv4 matched first and stripped before the looser domain regex (no double-matching), hex hashes 8-64, domains require plausible alpha TLD + non-numeric first label; dedupe + cap.
+  * alert-drawer.tsx: new section between Description and Correlation — chips built from alert.ip + description + metadata string values; per-chip type icon (ip/domain/hash), mono value, type tag, and add-to-watchlist "+" button; "✓ LISTED" emerald state when the value is already on the watchlist (drawer shares the ["watchlist"] react-query cache with the Command Center card, staleTime 15s); caption explains watched indicators raise future scores.
+  * Browser-verified end-to-end: SIM-MU16EO1HF (ip 203.0.113.42, not listed) → "+" → toast "IOC added to watchlist — future correlations will treat it as malicious intel" → chip flips to "✓ LISTED"; /api/watchlist shows the new item (hits: 5 — matches INC-1008 alerts).
+- FEATURE 2 — WATCHLIST TYPE FILTERS + SORT (r8 remaining idea):
+  * watchlist-card.tsx: segmented filter chips ALL/IPs/DOMAINS/HASHES with live per-type counts (aria-pressed, emerald active glow — matches Command Center filter style); sort Select (Newest first / Most hits / Value A–Z) with ArrowDownWideNarrow icon; client-side filter+sort over items; dedicated empty state ("no hash indicators on the list" + "Show all N" recovery).
+  * Browser-verified: IPs filter → only the 2 IP rows; sort "Most hits" → 203.0.113.66 (3 hits) first, 198.51.100.7 (2) second.
+- FEATURE 3 — MITRE KILL-CHAIN PROGRESSION STRIP (Incident Analysis):
+  * mitre-data.ts exports ATTACK_TACTIC_ORDER (14 canonical ATT&CK tactics in kill-chain order).
+  * incident-analysis.tsx KillChainStrip above the technique chips in the MITRE card: one pill per tactic, emerald-lit when the incident's mapped techniques touch it (technique.tactic parsed on commas → a technique can light several stages), dimmed otherwise; stagger-in framer-motion (30ms/tactic); "7/14 stages observed" counter chip (aria-live); hover title lists the mapped technique ids per stage; technique list unchanged below.
+  * Browser-verified on INC-1001: 7/14 lit (Initial Access, Persistence, Priv Esc, Defense Evasion, Credential Access, Lateral Movement, Exfiltration); wraps cleanly on 375px.
+- FEATURE 4 — ANALYSIS → THREAT GRAPH CROSS-LINK WITH PINNED FOCUS:
+  * soc-store: graphFocusIncidentId + focusIncidentInGraph() (persists tab) + clearGraphFocus().
+  * DetailPane actions row gains a sky-accent "Threat Graph" button (Waypoints icon).
+  * threat-graph.tsx: pinned store id resolves to the inc:<dbId> node; activeId = hoverId ?? pinnedId drives ALL highlight logic (node glyph scale, edge thickness/opacity, dimming, info box) — the focused incident behaves like a persistent hover until cleared; sky "focused: INC-1001 ✕" chip in the stats row clears it (hidden while actually hovering).
+  * Browser-verified: INC-1001 → Threat Graph → cluster highlighted (red edges full-opacity, rest dimmed), info box shows INC-1001 Critical score 95, chip present; clear → chip gone, normal graph.
+- STYLING (mandatory):
+  * page.tsx: animated tab pill — motion.span layoutId "soc-tab-pill" springs between tabs (stiffness 480 / damping 42); shadcn active-state bg/border/shadow neutralized so the pill is the single active indicator; SSR-safe (initial render matches server).
+  * globals.css: emerald ::selection; .soc-sheen inner top-highlight utility; prefers-reduced-motion guards for the decorative soc-scanline + soc-dot animations (a11y).
+  * New UI styled to match the system: drawer IOC chips (red-tinted, hover ring), watchlist chips (emerald glow), kill-chain pills (emerald lit vs 45% dim), graph focus chip (sky).
+- OPS note: two transient "GET / 500 — ReferenceError: ArrowRightLeft is not defined" lines in dev.log were mid-edit Fast Refresh artifacts (dev server compiled a partially-saved file during this round's edits); file verified intact, fresh render 200, post-edit browser sweep had zero console errors. Not a real bug.
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero browser console errors after fresh reload + full tab sweep; watchlist API spot-checked via curl; mobile 375px no overflow.
+
+Stage Summary:
+- New capabilities: alert-drawer IOC extraction + one-tap watchlist add, watchlist type filters + sort, MITRE kill-chain progression strip, Analysis→Graph pinned focus cross-link, animated tab indicator + reduced-motion a11y styling.
+- r8 "remaining ideas" progress: "alert-drawer copy IOC to watchlist" DONE, "watchlist IOC type filters/sort" DONE. Still open: graph drag-node repositioning, feed pagination (server limit support exists; not needed at demo scale).
+- DB state: 40 alerts / 8 incidents (INC-1001 analyzed, Contained) / watchlist 4 items (203.0.113.42 added via drawer this round) / 38 unacked; simulation OFF.
+- Risks: none known. extractIocs is heuristic (demo-level); drawer "listed" state trusts the shared watchlist cache (15s staleness acceptable).
+- Next-phase suggestions: graph drag-node repositioning, incident compare/split view, copilot "explain this incident" deep-link buttons in the drawer, e2e smoke script of the 5 core flows.

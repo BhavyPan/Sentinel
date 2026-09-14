@@ -37,6 +37,8 @@ interface SocState {
   activeTab: SocTab;
   /** db id of the incident selected in the Analysis tab (null = auto-pick first) */
   selectedIncidentId: string | null;
+  /** db id of the incident pinned/highlighted in the Threat Graph (null = none) */
+  graphFocusIncidentId: string | null;
   /** keyboard shortcuts help dialog ("?" / footer hint) */
   shortcutsOpen: boolean;
   setActiveTab: (tab: SocTab) => void;
@@ -45,12 +47,16 @@ interface SocState {
   openIncident: (incidentDbId: string) => void;
   /** jump to Copilot tab with a pre-filled question */
   askQuestion: (question: string) => void;
+  /** jump to the Threat Graph with a specific incident pinned/highlighted */
+  focusIncidentInGraph: (incidentDbId: string) => void;
+  clearGraphFocus: () => void;
   setShortcutsOpen: (open: boolean) => void;
 }
 
 export const useSocStore = create<SocState>((set) => ({
   activeTab: "command",
   selectedIncidentId: null,
+  graphFocusIncidentId: null,
   shortcutsOpen: false,
   setActiveTab: (tab) => {
     persistTab(tab);
@@ -66,5 +72,10 @@ export const useSocStore = create<SocState>((set) => ({
     persistTab("copilot");
     set({ activeTab: "copilot" });
   },
+  focusIncidentInGraph: (incidentDbId) => {
+    persistTab("graph");
+    set({ graphFocusIncidentId: incidentDbId, activeTab: "graph" });
+  },
+  clearGraphFocus: () => set({ graphFocusIncidentId: null }),
   setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
 }));
