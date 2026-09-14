@@ -11,6 +11,7 @@ export async function GET(req: Request) {
     const source = searchParams.get("source") || undefined;
     const severity = searchParams.get("severity") || undefined;
     const correlated = searchParams.get("correlated");
+    const ack = searchParams.get("ack"); // "ack" | "unack" | undefined
     const search = (searchParams.get("search") || "").trim().toLowerCase();
     const limitRaw = parseInt(searchParams.get("limit") || "200", 10);
     const limit = Math.max(1, Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200));
@@ -21,6 +22,8 @@ export async function GET(req: Request) {
         ...(severity ? { rawSeverity: severity } : {}),
         ...(correlated === "true" ? { incidentId: { not: null } } : {}),
         ...(correlated === "false" ? { incidentId: null } : {}),
+        ...(ack === "ack" ? { acknowledged: true } : {}),
+        ...(ack === "unack" ? { acknowledged: false } : {}),
       },
       orderBy: { timestamp: "desc" },
     });

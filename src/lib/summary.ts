@@ -44,6 +44,7 @@ export function toAlertDTO(a: Alert): AlertDTO {
     rawFormat: a.rawFormat,
     metadata: parseJsonSafe<Record<string, unknown>>(a.metadata, {}),
     incidentId: a.incidentId,
+    acknowledged: a.acknowledged,
     correlated: a.incidentId != null,
   };
 }
@@ -135,7 +136,9 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     genuineThreats: 0,
     analyzed: 0,
     open: 0,
+    unacknowledgedAlerts: 0,
   };
+  counts.unacknowledgedAlerts = alerts.filter((a) => !a.acknowledged).length;
   for (const inc of incidents) {
     const sev = inc.severity as Severity;
     if (sev === "Critical") counts.critical++;

@@ -5,11 +5,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import {
+  Bookmark,
+  BookmarkPlus,
+  Check,
+  CheckCheck,
   Download,
   FileUp,
   Paperclip,
   RotateCw,
   Search,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -21,6 +26,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -52,6 +73,7 @@ import { apiGet, apiSend } from "@/lib/api-client";
 import { DEMO_FEED_LABELS } from "@/lib/seed-data";
 import type {
   AlertDTO,
+  AlertUpdateResult,
   DashboardSummary,
   ImportPayload,
   ImportResult,
@@ -68,6 +90,7 @@ interface FeedFilters {
   source: string;
   severity: string;
   correlated: CorrelatedFilter;
+  hideAck: boolean;
 }
 
 const DEFAULT_FILTERS: FeedFilters = {
@@ -75,6 +98,7 @@ const DEFAULT_FILTERS: FeedFilters = {
   source: "all",
   severity: "all",
   correlated: "all",
+  hideAck: false,
 };
 
 function buildAlertsUrl(filters: FeedFilters): string {
@@ -83,8 +107,58 @@ function buildAlertsUrl(filters: FeedFilters): string {
   if (filters.source !== "all") params.set("source", filters.source);
   if (filters.severity !== "all") params.set("severity", filters.severity);
   if (filters.correlated === "correlated") params.set("correlated", "true");
+  if (filters.hideAck) params.set("ack", "unack");
   const qs = params.toString();
   return qs ? `/api/alerts?${qs}` : "/api/alerts";
+}
+
+// ------------------------------------------------------------------
+// Saved filter presets (localStorage)
+// ----------------------------------------------------------------------
+
+interface FeedPreset {
+  id: string;
+  name: string;
+  filters: FeedFilters;
+}
+
+const PRESETS_KEY = "sentinelai.feedPresets";
+
+function loadPresets(): FeedPreset[] {
+  if (typeof window === "undefined") return []; // SSR guard
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p): p is FeedPreset =>
+        typeof p === "object" && p !== null &&
+        typeof (p as FeedPreset).id === "string" &&
+        typeof (p as FeedPreset).name === "string" &&
+        typeof (p as FeedPreset).filters === "object"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(presets: FeedPreset[]) {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+  } catch {
+    // storage full/blocked — presets just won't persist
+  }
+}
+
+function filtersMatch(a: FeedFilters, b: FeedFilters): boolean {
+  return (
+    a.search === b.search &&
+    a.source === b.source &&
+    a.severity === b.severity &&
+    a.correlated === b.correlated &&
+    a.hideAck === b.hideAck
+  );
 }
 
 // ------------------------------------------------------------------
@@ -294,26 +368,55 @@ function ImportPanel() {
 // Feed table
 // ----------------------------------------------------------------------
 
+/** Alerts newer than this get a pulsing "NEW" chip. */
+const FRESH_MS = 120_000;
+
 function AlertRow({
   alert,
   incidentIdMap,
+  ackPending,
+  onToggleAck,
 }: {
   alert: AlertDTO;
   incidentIdMap: Map<string, string>;
+  ackPending: boolean;
+  onToggleAck: (alert: AlertDTO) => void;
 }) {
   const openIncident = useSocStore((s) => s.openIncident);
   const displayIncidentId = alert.incidentId
     ? incidentIdMap.get(alert.incidentId) ?? "View incident"
     : null;
+  const fresh = Date.now() - new Date(alert.timestamp).getTime() < FRESH_MS;
 
   return (
-    <TableRow className="border-white/5 hover:bg-emerald-500/5">
+    <TableRow
+      className={cn(
+        "border-white/5 transition-opacity hover:bg-emerald-500/5",
+        alert.acknowledged && "bg-muted/20 opacity-55 hover:opacity-80"
+      )}
+    >
       <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground" title={formatDateTime(alert.timestamp)}>
         <span className="block text-foreground/80">{timeAgo(alert.timestamp)}</span>
         <span className="block text-[10px] text-muted-foreground/70">{formatDateTime(alert.timestamp)}</span>
       </TableCell>
       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold text-foreground/85">
-        {alert.alertId}
+        <span className="flex items-center gap-1.5">
+          {alert.alertId}
+          {fresh && !alert.acknowledged && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/15 px-1.5 py-px font-mono text-[9px] font-bold tracking-wider text-emerald-300">
+              <span className="relative flex size-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" aria-hidden="true" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+              </span>
+              NEW
+            </span>
+          )}
+          {alert.acknowledged && (
+            <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-px font-mono text-[9px] font-bold tracking-wider text-emerald-400/90">
+              ACK
+            </span>
+          )}
+        </span>
       </TableCell>
       <TableCell>
         <SourceChip source={alert.source} sourceLabel={alert.sourceLabel} />
@@ -343,6 +446,38 @@ function AlertRow({
           }
         />
       </TableCell>
+      <TableCell className="pr-3">
+        <button
+          type="button"
+          onClick={() => onToggleAck(alert)}
+          disabled={ackPending}
+          aria-pressed={alert.acknowledged}
+          aria-label={
+            alert.acknowledged
+              ? `Clear acknowledgement for alert ${alert.alertId}`
+              : `Acknowledge alert ${alert.alertId}`
+          }
+          title={
+            alert.acknowledged
+              ? `Acknowledged — click to clear`
+              : `Mark ${alert.alertId} as reviewed`
+          }
+          className={cn(
+            "inline-flex size-8 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            alert.acknowledged
+              ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+              : "border-border bg-transparent text-muted-foreground hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
+          )}
+        >
+          {ackPending ? (
+            <RotateCw className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : alert.acknowledged ? (
+            <CheckCheck className="size-4" aria-hidden="true" />
+          ) : (
+            <Check className="size-4" aria-hidden="true" />
+          )}
+        </button>
+      </TableCell>
     </TableRow>
   );
 }
@@ -365,6 +500,46 @@ export function ThreatFeed() {
   const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS);
   const [searchInput, setSearchInput] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [presets, setPresets] = useState<FeedPreset[]>(() => loadPresets());
+  const [presetDialogOpen, setPresetDialogOpen] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const queryClient = useQueryClient();
+
+  // track whether current filters match a saved preset (for the active chip)
+  const activePreset = useMemo(
+    () => presets.find((p) => filtersMatch(p.filters, filters)) ?? null,
+    [presets, filters]
+  );
+
+  const applyPreset = (preset: FeedPreset) => {
+    setFilters({ ...preset.filters });
+    setSearchInput(preset.filters.search);
+    toast.success(`Preset applied — ${preset.name}`);
+  };
+
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name) return;
+    // overwrite an existing preset with the same name
+    const next: FeedPreset[] = [
+      ...presets.filter((p) => p.name.toLowerCase() !== name.toLowerCase()),
+      { id: `p-${Date.now().toString(36)}`, name, filters: { ...filters } },
+    ];
+    setPresets(next);
+    savePresets(next);
+    setPresetDialogOpen(false);
+    setPresetName("");
+    toast.success(`Preset "${name}" saved`, {
+      description: "Stored locally in this browser.",
+    });
+  };
+
+  const deletePreset = (preset: FeedPreset) => {
+    const next = presets.filter((p) => p.id !== preset.id);
+    setPresets(next);
+    savePresets(next);
+    toast.success(`Preset "${preset.name}" deleted`);
+  };
 
   // debounce search input into the applied filter
   useEffect(() => {
@@ -377,6 +552,22 @@ export function ThreatFeed() {
     queryFn: () => apiGet<unknown>(buildAlertsUrl(filters)),
     select: (d: unknown) => unwrapList<AlertDTO>(d, "alerts"),
   });
+
+  // ack triage toggle
+  const ackMutation = useMutation({
+    mutationFn: (alert: AlertDTO) =>
+      apiSend<AlertUpdateResult>(`/api/alerts/${alert.id}`, "PATCH", {
+        acknowledged: !alert.acknowledged,
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries();
+      toast.success(data.message);
+    },
+    onError: (err: Error) => {
+      toast.error("Could not update alert", { description: err.message });
+    },
+  });
+  const pendingAckId = ackMutation.variables?.id;
 
   // summary is shared with Command Center (same key) — used for source options
   const summaryQuery = useQuery({
@@ -477,6 +668,89 @@ export function ThreatFeed() {
                 </Label>
               </div>
 
+              <div className="flex min-h-11 items-center gap-2 rounded-lg border border-input bg-background/40 px-3">
+                <Switch
+                  id="hide-acknowledged"
+                  checked={filters.hideAck}
+                  onCheckedChange={(checked) =>
+                    setFilters((f) => ({ ...f, hideAck: checked }))
+                  }
+                  aria-label="Hide acknowledged alerts"
+                />
+                <Label htmlFor="hide-acknowledged" className="cursor-pointer text-xs text-muted-foreground">
+                  Hide acked
+                </Label>
+              </div>
+
+              {/* saved filter presets */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className={cn(
+                      "size-11 shrink-0",
+                      activePreset && "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                    )}
+                    aria-label="Saved filter presets"
+                  >
+                    <Bookmark className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuLabel className="flex items-center justify-between">
+                    Filter presets
+                    {activePreset && (
+                      <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+                        {activePreset.name}
+                      </span>
+                    )}
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setPresetName("");
+                      setPresetDialogOpen(true);
+                    }}
+                    className="gap-2 text-emerald-300 focus:text-emerald-200"
+                  >
+                    <BookmarkPlus className="size-4" aria-hidden="true" />
+                    Save current filters…
+                  </DropdownMenuItem>
+                  {presets.length > 0 && <DropdownMenuSeparator />}
+                  {presets.map((p) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onSelect={() => applyPreset(p)}
+                      className="group gap-2"
+                    >
+                      <Bookmark className={cn("size-3.5 shrink-0", activePreset?.id === p.id ? "text-emerald-400" : "text-muted-foreground")} aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                        {[p.filters.source !== "all" && "src", p.filters.severity !== "all" && "sev", p.filters.correlated === "correlated" && "corr", p.filters.hideAck && "unacked", p.filters.search && "\"search\""].filter(Boolean).join(" · ") || "all"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deletePreset(p);
+                        }}
+                        aria-label={`Delete preset ${p.name}`}
+                        className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-300 focus-visible:opacity-100 group-hover:opacity-100"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </DropdownMenuItem>
+                  ))}
+                  {presets.length === 0 && (
+                    <p className="px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                      No presets yet — configure the filters above, then save them for one-click recall.
+                    </p>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
               <Button
                 variant="outline"
                 size="icon"
@@ -492,14 +766,27 @@ export function ThreatFeed() {
             </div>
           </div>
 
-          <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            <span aria-live="polite">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            <span aria-live="polite" className="flex flex-wrap items-center gap-2">
               {alertsQuery.isLoading
                 ? "Loading feed…"
                 : `${alerts.length} alert${alerts.length === 1 ? "" : "s"} in view`}
               {summaryQuery.data?.lastUpdated
                 ? ` · newest ${timeAgo(summaryQuery.data.lastUpdated)}`
                 : ""}
+              {typeof summaryQuery.data?.counts.unacknowledgedAlerts === "number" &&
+                summaryQuery.data.counts.unacknowledgedAlerts > 0 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
+                    <Check className="size-3" aria-hidden="true" />
+                    {summaryQuery.data.counts.unacknowledgedAlerts} awaiting triage
+                  </span>
+                )}
+              {activePreset && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
+                  <Bookmark className="size-3" aria-hidden="true" />
+                  {activePreset.name}
+                </span>
+              )}
             </span>
             <button
               type="button"
@@ -576,12 +863,19 @@ export function ThreatFeed() {
                     <TableHead className="text-[11px] uppercase tracking-wider">Event</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Description</TableHead>
                     <TableHead className="text-[11px] uppercase tracking-wider">Raw Sev.</TableHead>
-                    <TableHead className="pr-4 text-[11px] uppercase tracking-wider">Status</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wider">Status</TableHead>
+                    <TableHead className="pr-3 text-right text-[11px] uppercase tracking-wider" aria-label="Acknowledge">Ack</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {alerts.map((a) => (
-                    <AlertRow key={a.id} alert={a} incidentIdMap={incidentIdMap} />
+                    <AlertRow
+                      key={a.id}
+                      alert={a}
+                      incidentIdMap={incidentIdMap}
+                      ackPending={pendingAckId === a.id}
+                      onToggleAck={(alert) => ackMutation.mutate(alert)}
+                    />
                   ))}
                 </TableBody>
               </Table>
@@ -589,6 +883,57 @@ export function ThreatFeed() {
           )}
         </Card>
       </motion.div>
+
+      {/* Save-preset dialog */}
+      <Dialog open={presetDialogOpen} onOpenChange={setPresetDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookmarkPlus className="size-4 text-emerald-400" aria-hidden="true" />
+              Save filter preset
+            </DialogTitle>
+            <DialogDescription>
+              Stores the current search, source, severity, correlation and triage filters in this
+              browser for one-click recall.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="preset-name">Preset name</Label>
+            <Input
+              id="preset-name"
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  savePreset();
+                }
+              }}
+              placeholder="e.g. Critical auth alerts"
+              maxLength={40}
+              autoFocus
+            />
+            <p className="font-mono text-[11px] text-muted-foreground">
+              {[filters.source !== "all" && `source: ${filters.source}`, filters.severity !== "all" && `severity: ${filters.severity}`, filters.correlated === "correlated" && "correlated only", filters.hideAck && "hide acknowledged", filters.search.trim() && `search: "${filters.search.trim()}"`]
+                .filter(Boolean)
+                .join(" · ") || "no filters (show everything)"}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPresetDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={savePreset}
+              disabled={!presetName.trim()}
+              className="gap-2 border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+            >
+              <BookmarkPlus className="size-4" aria-hidden="true" />
+              Save preset
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

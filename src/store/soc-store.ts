@@ -5,9 +5,33 @@ import { useCopilotStore } from "@/store/copilot-store";
 
 export type SocTab = "command" | "feed" | "graph" | "analysis" | "copilot";
 
+const TAB_KEY = "sentinelai.activeTab";
+const TABS: SocTab[] = ["command", "feed", "graph", "analysis", "copilot"];
+
+/** Read the persisted tab (client storage only — SSR falls back to "command"). */
+export function loadSavedTab(): SocTab | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = window.localStorage.getItem(TAB_KEY) as SocTab | null;
+    return saved && TABS.includes(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistTab(tab: SocTab) {
+  try {
+    window.localStorage.setItem(TAB_KEY, tab);
+  } catch {
+    // storage blocked — tab just won't persist
+  }
+}
+
 /**
  * Global SOC shell state: which tab is active + which incident is selected.
  * Lets any tab jump to another (e.g. incident row click → Analysis tab).
+ * The active tab persists across reloads — restore it post-hydration via
+ * loadSavedTab() (see Page) to avoid SSR/client markup mismatches.
  */
 interface SocState {
   activeTab: SocTab;
@@ -24,12 +48,18 @@ interface SocState {
 export const useSocStore = create<SocState>((set) => ({
   activeTab: "command",
   selectedIncidentId: null,
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  setActiveTab: (tab) => {
+    persistTab(tab);
+    set({ activeTab: tab });
+  },
   selectIncident: (incidentDbId) => set({ selectedIncidentId: incidentDbId }),
-  openIncident: (incidentDbId) =>
-    set({ selectedIncidentId: incidentDbId, activeTab: "analysis" }),
+  openIncident: (incidentDbId) => {
+    persistTab("analysis");
+    set({ selectedIncidentId: incidentDbId, activeTab: "analysis" });
+  },
   askQuestion: (question) => {
     useCopilotStore.getState().askCopilot(question);
+    persistTab("copilot");
     set({ activeTab: "copilot" });
   },
 }));

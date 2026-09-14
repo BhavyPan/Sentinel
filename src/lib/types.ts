@@ -33,6 +33,8 @@ export interface AlertDTO {
   rawFormat: string; // "json" | "csv" | "text"
   metadata: Record<string, unknown>;
   incidentId: string | null; // db id of parent incident
+  /** triage: analyst has reviewed this alert */
+  acknowledged: boolean;
   /** populated in feed views: whether this alert is part of a correlated incident */
   correlated?: boolean;
 }
@@ -80,6 +82,8 @@ export interface DashboardSummary {
     genuineThreats: number;
     analyzed: number;
     open: number;
+    /** alerts not yet acknowledged by an analyst */
+    unacknowledgedAlerts: number;
   };
   alertsBySeverity: { severity: string; count: number }[];
   alertsBySource: { source: string; sourceLabel: string; count: number }[];
@@ -128,6 +132,17 @@ export interface SeedResult {
   seeded: number;
   correlated: number;
   incidents: number;
+  message: string;
+}
+
+/** PATCH /api/alerts/[id] body — triage acknowledgement */
+export interface AlertUpdatePayload {
+  acknowledged?: boolean;
+}
+
+/** PATCH /api/alerts/[id] → response */
+export interface AlertUpdateResult {
+  alert: AlertDTO;
   message: string;
 }
 

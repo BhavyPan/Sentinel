@@ -1,10 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Network, MousePointerClick, ShieldAlert, Users, HardDrive, Globe } from "lucide-react";
+import {
+  Maximize,
+  Network,
+  MousePointerClick,
+  ShieldAlert,
+  Users,
+  HardDrive,
+  Globe,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/soc/error-state";
 import { EmptyHero } from "@/components/soc/empty-hero";
@@ -47,6 +58,62 @@ function hash01(s: string): number {
     h = Math.imul(h, 16777619);
   }
   return ((h >>> 0) % 1000) / 1000;
+}
+
+/**
+ * Deterministic post-pass: nudge entity nodes apart until no two label boxes
+ * overlap (labels render below glyphs, mono ~5.4px/char). Incident nodes stay fixed.
+ */
+function resolveLabelCollisions(positions: Map<string, Positioned>) {
+  const ents = [...positions.values()].filter((p) => p.node.kind === "entity");
+  const halfW = (p: Positioned) => (Math.min(p.node.label.length, 16) * 5.4) / 2 + 5;
+  const MIN_GAP = 6;
+
+  for (let pass = 0; pass < 40; pass++) {
+    let movedAny = false;
+    for (let i = 0; i < ents.length; i++) {
+      for (let j = i + 1; j < ents.length; j++) {
+        const a = ents[i];
+        const b = ents[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const needX = halfW(a) + halfW(b) + MIN_GAP;
+        const needY = 22; // glyph + label stack height
+        const overlapX = needX - Math.abs(dx);
+        const overlapY = needY - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+
+        // push apart along the dominant separation axis (stable, less drift)
+        let pushX = 0;
+        let pushY = 0;
+        if (overlapX / needX >= overlapY / needY) {
+          const dir = dx >= 0 ? 1 : -1;
+          // if vertically stacked, prefer horizontal slide opposite to overlap direction
+          pushX = (overlapX / 2 + 0.5) * dir;
+        } else {
+          const dir = dy >= 0 ? 1 : -1;
+          pushY = (overlapY / 2 + 0.5) * dir;
+        }
+        a.x += pushX;
+        a.y += pushY;
+        b.x -= pushX;
+        b.y -= pushY;
+        movedAny = true;
+      }
+    }
+    // keep entities inside a sane ring band so the cluster shape survives
+    for (const e of ents) {
+      const dx = e.x - CX;
+      const dy = e.y - CY;
+      const r = Math.hypot(dx, dy) || 1;
+      const clamped = Math.min(Math.max(r, R_ENTITY - 110), R_ENTITY + 135);
+      if (Math.abs(clamped - r) > 0.01) {
+        e.x = CX + (dx / r) * clamped;
+        e.y = CY + (dy / r) * clamped;
+      }
+    }
+    if (!movedAny) break;
+  }
 }
 
 function computeLayout(data: GraphData) {
@@ -107,6 +174,8 @@ function computeLayout(data: GraphData) {
       const p = polar(ring, angle);
       positions.set(ent.id, { node: ent, x: p.x, y: p.y });
     });
+
+  resolveLabelCollisions(positions);
 
   return { positions, incidents, entityById };
 }
@@ -326,10 +395,122 @@ const FILTERS: { value: TypeFilter; label: string }[] = [
   { value: "ip", label: "IPs" },
 ];
 
+// ------------------------------------------------------------------
+// Pan & zoom (viewBox based — deterministic, no layout drift)
+// ------------------------------------------------------------------
+
+interface ViewState {
+  x: number;
+  y: number;
+  k: number;
+}
+
+const K_MIN = 0.55;
+const K_MAX = 3;
+
+function clampView(v: ViewState): ViewState {
+  const w = VB_W / v.k;
+  const h = VB_H / v.k;
+  return {
+    k: v.k,
+    x: Math.min(Math.max(v.x, -w * 0.35), w * 0.35),
+    y: Math.min(Math.max(v.y, -h * 0.35), h * 0.35),
+  };
+}
+
 export function ThreatGraph() {
-  const openIncident = useSocStore((s) => s.openIncident);
+  const openIncidentRaw = useSocStore((s) => s.openIncident);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [view, setView] = useState<ViewState>({ x: 0, y: 0, k: 1 });
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const panRef = useRef<{
+    sx: number;
+    sy: number;
+    vx: number;
+    vy: number;
+    rectW: number;
+    rectH: number;
+    moved: boolean;
+  } | null>(null);
+  const didPanRef = useRef(false);
+
+  const zoomAt = (factor: number, mx = 0.5, my = 0.5) => {
+    setView((v) => {
+      const k2 = Math.min(K_MAX, Math.max(K_MIN, v.k * factor));
+      const px = v.x + mx * (VB_W / v.k);
+      const py = v.y + my * (VB_H / v.k);
+      return clampView({ k: k2, x: px - mx * (VB_W / k2), y: py - my * (VB_H / k2) });
+    });
+  };
+
+  const resetView = () => setView({ x: 0, y: 0, k: 1 });
+
+  // wheel zoom — non-passive so we can stop page scroll over the canvas
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) / rect.width;
+      const my = (e.clientY - rect.top) / rect.height;
+      zoomAt(Math.exp(-e.deltaY * 0.0016), mx, my);
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    panRef.current = {
+      sx: e.clientX,
+      sy: e.clientY,
+      vx: view.x,
+      vy: view.y,
+      rectW: rect.width,
+      rectH: rect.height,
+      moved: false,
+    };
+    didPanRef.current = false;
+    try {
+      svg.setPointerCapture(e.pointerId);
+    } catch {
+      // synthetic/already-released pointers have no active pointer id —
+      // pan still works while the cursor stays inside the svg
+    }
+  };
+
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const p = panRef.current;
+    if (!p) return;
+    if (!p.moved && Math.abs(e.clientX - p.sx) + Math.abs(e.clientY - p.sy) > 4) {
+      p.moved = true;
+      didPanRef.current = true;
+    }
+    if (!p.moved) return;
+    const dx = (e.clientX - p.sx) * (VB_W / p.rectW);
+    const dy = (e.clientY - p.sy) * (VB_H / p.rectH);
+    setView((v) => clampView({ ...v, x: p.vx - dx, y: p.vy - dy }));
+  };
+
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (panRef.current) {
+      panRef.current = null;
+      try {
+        svgRef.current?.releasePointerCapture?.(e.pointerId);
+      } catch {
+        // pointer may already be released
+      }
+      // click fires right after pointerup — keep the didPan flag for that tick
+      setTimeout(() => {
+        didPanRef.current = false;
+      }, 0);
+    }
+  };
 
   const query = useQuery({
     queryKey: ["graph"],
@@ -376,7 +557,8 @@ export function ThreatGraph() {
     typeFilter === "all" || n.entityType === typeFilter;
 
   const openNode = (node: GraphNode) => {
-    if (node.incidentDbIds.length > 0) openIncident(node.incidentDbIds[0]);
+    if (didPanRef.current) return; // ignore clicks that were actually drags
+    if (node.incidentDbIds.length > 0) openIncidentRaw(node.incidentDbIds[0]);
   };
 
   const linkVisible = (sourceId: string, targetId: string): boolean => {
@@ -435,7 +617,7 @@ export function ThreatGraph() {
             )}
             <span className="ml-auto hidden items-center gap-1.5 md:flex">
               <MousePointerClick className="size-3.5" aria-hidden="true" />
-              click any node to open its incident
+              click a node to open its incident · drag to pan · scroll or +/- to zoom
             </span>
           </div>
         </Card>
@@ -466,13 +648,58 @@ export function ThreatGraph() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="soc-scroll overflow-x-auto">
-              <svg
-                viewBox={`0 0 ${VB_W} ${VB_H}`}
-                className="h-auto min-w-[760px] w-full select-none"
-                role="img"
-                aria-label="Threat graph: entities linked to incidents"
-              >
+            <div className="relative">
+              {/* zoom controls */}
+              <div className="absolute right-3 top-3 z-10 flex flex-col items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8 bg-background/85 backdrop-blur"
+                  onClick={() => zoomAt(1.25)}
+                  aria-label="Zoom in"
+                >
+                  <ZoomIn className="size-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8 bg-background/85 backdrop-blur"
+                  onClick={() => zoomAt(0.8)}
+                  aria-label="Zoom out"
+                >
+                  <ZoomOut className="size-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8 bg-background/85 backdrop-blur"
+                  onClick={resetView}
+                  aria-label="Reset pan and zoom"
+                >
+                  <Maximize className="size-4" aria-hidden="true" />
+                </Button>
+                <span
+                  className="rounded border border-border bg-background/85 px-1 py-px font-mono text-[9px] text-muted-foreground backdrop-blur"
+                  aria-live="polite"
+                >
+                  {Math.round(view.k * 100)}%
+                </span>
+              </div>
+              <div className="soc-scroll overflow-x-auto">
+                <svg
+                  ref={svgRef}
+                  viewBox={`${view.x} ${view.y} ${VB_W / view.k} ${VB_H / view.k}`}
+                  className="h-auto min-w-[760px] w-full cursor-grab touch-none select-none active:cursor-grabbing"
+                  role="img"
+                  aria-label="Threat graph: entities linked to incidents"
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
+                  onPointerCancel={onPointerUp}
+                >
                 {/* faint ring guides */}
                 <circle cx={CX} cy={CY} r={R_INCIDENT} fill="none" stroke="oklch(1 0 0 / 4%)" strokeDasharray="2 6" />
                 <circle cx={CX} cy={CY} r={R_ENTITY} fill="none" stroke="oklch(1 0 0 / 3%)" strokeDasharray="2 6" />
@@ -544,6 +771,7 @@ export function ThreatGraph() {
                     );
                   })}
               </svg>
+              </div>
             </div>
           </CardContent>
         </Card>

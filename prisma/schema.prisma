@@ -24,6 +24,8 @@ model Alert {
   metadata    String    @default("{}") // JSON string: iocs, extra fields
   incidentId  String?
   incident    Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  acknowledged   Boolean    @default(false) // triage: analyst has reviewed this alert
+  acknowledgedAt DateTime?
   createdAt   DateTime  @default(now())
 
   @@index([timestamp])

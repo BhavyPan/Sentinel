@@ -9,6 +9,7 @@ import {
   Copy,
   Crosshair,
   Download,
+  FileDown,
   FileText,
   Loader2,
   NotebookPen,
@@ -380,6 +381,7 @@ function buildReportText(incident: IncidentDetailDTO): string {
 
 function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
   const [copied, setCopied] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   if (!incident.bluf) return null;
 
   const copyBluf = async () => {
@@ -404,6 +406,24 @@ function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
     a.remove();
     URL.revokeObjectURL(url);
     toast.success(`Full report downloaded (${incident.incidentId})`);
+  };
+
+  const downloadPdf = async () => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    toast.info(`Building PDF report for ${incident.incidentId}…`);
+    try {
+      // dynamic import keeps jsPDF out of the initial bundle
+      const { downloadIncidentPdf } = await import("@/lib/report-pdf");
+      await downloadIncidentPdf(incident);
+      toast.success(`PDF report downloaded (${incident.incidentId})`);
+    } catch (err) {
+      toast.error("PDF export failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setPdfBusy(false);
+    }
   };
 
   return (
@@ -449,6 +469,22 @@ function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
             >
               <Download className="size-3.5" aria-hidden="true" />
               Report .txt
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void downloadPdf()}
+              disabled={pdfBusy}
+              className="min-h-8 gap-1.5 border-emerald-500/40 bg-transparent px-2.5 font-mono text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200"
+              aria-label="Download full incident report as PDF"
+            >
+              {pdfBusy ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <FileDown className="size-3.5" aria-hidden="true" />
+              )}
+              {pdfBusy ? "Building…" : "Report .pdf"}
             </Button>
           </span>
         </div>

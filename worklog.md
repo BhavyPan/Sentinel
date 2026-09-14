@@ -176,3 +176,35 @@ Stage Summary:
 - Keyboard: 1-5 switch views; footer hints updated; shortcuts correctly ignored while typing in inputs/notes.
 - Remaining ideas for next round: PDF report export (jsPDF or print stylesheet), graph pan/zoom + edge click metadata, saved filter presets, alert acknowledge/claim workflow, per-user audit trail on notes (currently generic "[Analyst]").
 - Risks: none known. /api/graph is read-only; graph layout is deterministic (pure function of data, no simulation drift between renders).
+---
+Task ID: r4 (webDevReview round 4)
+Agent: Z.ai Code (main)
+Task: Scheduled review — status assessment + QA sweep, then feature round: PDF export, alert acknowledge workflow, saved filter presets, graph pan/zoom + label collision fix, tab persistence
+
+Work Log:
+- STATUS ASSESSMENT: dev server healthy (200), lint + tsc clean, DB intact (40 alerts / 8 incidents / INC-1001 analyzed). Full agent-browser QA sweep at 1440x900 + 375x812 across all 5 tabs: zero console errors, all flows functional. Verdict: phase stable → proceeded to new feature development (no blocking bugs found).
+- FEATURE 1 — PDF REPORT EXPORT (spec §15 last remaining nice-to-have, NOW COMPLETE):
+  * bun add jspdf; src/lib/report-pdf.ts builds a 2-page A4 report: dark cover band (incident id + severity pill + severity-colored accent), meta key/value grid, 7 numbered sections (BLUF, MITRE, Risk Signals, Analyst Explanation, Recommended Actions, Key Evidence, Alert Timeline), auto page breaks with "(continued)" strips, per-page footer + page numbers. Dynamically imported from BlufReport ("Report .pdf" button next to "Report .txt", Loader2 busy state, toasts) so jsPDF stays out of the initial bundle.
+  * Fixed 2 layout bugs found in browser verification: MITRE tactic column overflow past right margin (char-capped with ellipsis) and related-alerts source list mid-word clip ("Firewall, SIEM Platform +2 more").
+  * Browser-verified end-to-end via download: valid 2-page PDF, saved sample to /home/z/my-project/download/SentinelAI-report-INC-1001.pdf.
+- FEATURE 2 — ALERT ACKNOWLEDGE / TRIAGE WORKFLOW:
+  * Schema: Alert.acknowledged Boolean @default(false) + acknowledgedAt DateTime? (db:push done).
+  * API: PATCH /api/alerts/[id] (accepts db cuid or alertId, 400 on bad body, 404 unknown), GET /api/alerts?ack=ack|unack filter, DashboardSummary.counts.unacknowledgedAlerts. AlertDTO.acknowledged added to contract.
+  * Feed UI: trailing "Ack" column with per-row toggle button (Check → CheckCheck, pending spinner), acknowledged rows dimmed (opacity-55) with ACK chip next to alert id, "Hide acked" switch, amber "N awaiting triage" counter chip in the status row.
+  * Browser-verified: ack FILE-001/002 → 40→38 counter, dimming + ACK chips, hide-acked filter (38 in view), un-ack works.
+- FEATURE 3 — SAVED FEED FILTER PRESETS:
+  * localStorage "sentinelai.feedPresets" (SSR-guarded lazy init), Bookmark dropdown: "Save current filters…" opens naming Dialog (shows live filter summary, Enter to save, same-name overwrites), preset rows show filter summary + hover delete, active preset auto-detected (emerald badge in dropdown + chip in status row).
+  * Browser-verified: saved "Unacked critical" preset, toggled filters off, re-applied from dropdown → filters + active chip restored, toast confirmation.
+- FEATURE 4 — THREAT GRAPH PAN/ZOOM + LABEL COLLISION FIX:
+  * viewBox-based zoom (55%..300%): +/- buttons, wheel-zoom toward cursor (non-passive listener), drag-to-pan with pointer capture, reset button, live zoom % readout; drag vs click disambiguation (didPanRef suppresses node click after pan). Hint text: "click a node to open its incident · drag to pan · scroll or +/- to zoom".
+  * resolveLabelCollisions(): deterministic post-pass in computeLayout — nudges overlapping entity labels apart (axis-dominant push, 40 passes max) inside a ring-band clamp; incident nodes fixed. Fixed the ws-4001/ws-2214 label overlap seen in QA; all 41 entity labels verified readable.
+  * BUGFIX: setPointerCapture/releasePointerCapture wrapped in try/catch (throws "No active pointer" for synthetic/edge-case pointers — found via dev overlay after scripted pan test).
+- FEATURE 5 — ACTIVE TAB PERSISTENCE: localStorage "sentinelai.activeTab"; restored once post-hydration in Page (loadSavedTab) to avoid SSR markup mismatch; setActiveTab/openIncident/askQuestion all persist. Browser-verified: reload on Graph/Analysis restores the tab, zero hydration errors.
+- OPS notes: dev server had stale Prisma client (schema push after server start) → Unknown argument `acknowledged` 500; fixed by clean restart; later Turbopack persistent cache corrupted after kill -9 (sst restore error) → fixed by rm -rf .next + restart. NOTE for future agents: after prisma db:push, restart the dev server; if Turbopack throws sst errors, wipe .next. Start detached via `(setsid bun run dev >> dev.log 2>&1 < /dev/null &)` so it survives the tool-call shell.
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; fresh-context browser console: 0 errors across all 5 tabs; dev.log clean.
+
+Stage Summary:
+- Spec §15 nice-to-haves: ALL 5 complete (live simulation, .txt report, CSV upload, entity graph, PDF export).
+- 5 SOC views + ack triage workflow + presets + pan/zoom graph + persistent tab state. DB: 40 alerts / 8 incidents / 38 unacked / 1 analyzed; simulation OFF.
+- Remaining ideas: acknowledge-all button + bulk actions, alert detail drawer, PDF for ALL incidents (bundle export), graph edge-click metadata, per-user audit trail on notes, drag node repositioning.
+- Risks: none known. jsPDF only in a lazy chunk (~0 impact on initial load). Ack/presets are additive schema/storage changes; no auth model (demo MVP).

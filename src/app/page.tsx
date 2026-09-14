@@ -10,7 +10,7 @@ import { ThreatFeed } from "@/components/soc/tabs/threat-feed";
 import { ThreatGraph } from "@/components/soc/tabs/threat-graph";
 import { IncidentAnalysis } from "@/components/soc/tabs/incident-analysis";
 import { AiCopilot } from "@/components/soc/tabs/ai-copilot";
-import { useSocStore, type SocTab } from "@/store/soc-store";
+import { useSocStore, loadSavedTab, type SocTab } from "@/store/soc-store";
 import { cn } from "@/lib/utils";
 
 const TAB_ITEMS: {
@@ -30,6 +30,12 @@ const TAB_ORDER: SocTab[] = ["command", "feed", "graph", "analysis", "copilot"];
 export default function Page() {
   const activeTab = useSocStore((s) => s.activeTab);
   const setActiveTab = useSocStore((s) => s.setActiveTab);
+
+  // Restore the persisted tab once, after hydration (avoids SSR markup mismatch)
+  useEffect(() => {
+    const saved = loadSavedTab();
+    if (saved && saved !== "command") setActiveTab(saved);
+  }, [setActiveTab]);
 
   // Keyboard shortcuts: 1-4 switch views (ignored while typing in form fields)
   useEffect(() => {
