@@ -280,3 +280,39 @@ Stage Summary:
 - DB state: 40 alerts / 8 incidents; INC-1001 analyzed (95, "Admin Account Compromise with Data Exfiltration"), status Contained, 2 audit events; watchlist: 203.0.113.66; simulation OFF.
 - Remaining ideas: watchlist bulk paste (CSV of IOCs), watchlist hit counters (how many alerts matched each IOC), severity/status filters on Command Center table, drag node repositioning, feed pagination.
 - Risks: none known. Watchlist validation is client-trusted demo level (IPv4 only, no IPv6/CIDR); events capped at 15 in DTO.
+---
+Task ID: r8 (webDevReview round 8)
+Agent: Z.ai Code (main)
+Task: Scheduled review — QA sweep, then: Watchlist bulk paste + hit counters, Command Center incident filters, keyboard-shortcuts help dialog, styling polish (KPI micro-interactions, severity stripes, mobile overflow fix)
+
+Work Log:
+- STATUS/QA: dev server healthy, lint + tsc clean, DB intact (40 alerts / 8 incidents / INC-1001 analyzed). agent-browser sweep at 1440x900 + 375x812 across all 5 tabs found ONE QA issue: 18px horizontal overflow at 375px viewport — the Priority Incidents header button group (Briefing .pdf / Export CSV, `shrink-0`) overflowed. Fixed this round. No console errors → stable → feature work.
+- QA FIX — MOBILE OVERFLOW (command-center.tsx): header row now `flex-wrap items-start`; export buttons get icon-only mode below sm (labels `hidden sm:inline` + `sr-only sm:hidden`, title + aria-label kept); verified scrollWidth 375 == innerWidth 375.
+- FEATURE 1 — WATCHLIST BULK PASTE (r7 remaining idea #1):
+  * Shared parser src/lib/watchlist-parse.ts (used by dialog preview AND route so counts always match): per line `type,value` (verified against claimed type) or bare value with auto-detection (IPv4 → ip, hex 8-64 → hash, else domain); `1.2.3.4,comment` and `comment,1.2.3.4` both handled (first auto-detectable column wins); `#`/`//` comments + blanks ignored; in-paste dedupe; 200-line cap; skipped lines carry {line, reason}.
+  * Backend POST /api/watchlist/bulk: parses, dedupes against DB (one findMany `value in [...]`), creates in a transaction with note "bulk import", refreshIntel() once; returns {added, duplicatesCount, duplicates[≤25], items, message}. Edge cases verified: empty text → 400; already-on-list → counted as skipped with reason; repeat paste → "Imported 0 indicators · 1 skipped".
+  * UI (watchlist-card.tsx): "Bulk paste" button in card header → Dialog with mono textarea, format hint, "insert sample" link, live preview chips ("N valid" emerald / "M skipped" muted, hover title lists reasons), skipped-reasons panel (amber, max 8 shown), Import button disabled at 0 valid with busy spinner; result toast includes skipped breakdown.
+  * Browser-verified end-to-end: pasted 6 lines (CIDR + garbage + dup + comment + valid ip + valid hash) → "2 valid / 3 skipped" preview → "Imported 2 indicators (1 ip, 1 hash) · 3 skipped" → rows appear, coverage updates.
+- FEATURE 2 — WATCHLIST HIT COUNTERS (r7 remaining idea #2):
+  * GET /api/watchlist now scans all alerts (ip column + metadata/description text, case-insensitive for domain/hash) and returns per-item `hits` + stats {itemCount, totalHits, itemsWithHits, lastAddedAt} (WatchlistHitStats in types.ts; WatchlistItemDTO.hits).
+  * UI: per-row Crosshair chip (red when >0, muted 0) with title tooltip; "coverage" stat strip under the header (N indicators · X alert hits · Y/Z matched) — hit chip glows red when totalHits > 0; list refetches every 30s so counters track new alerts.
+  * Verified counts against DB directly: 198.51.100.7 → FILE-001/FILE-002 (2 hits), hash → 0, 203.0.113.66 → 3; stats totals match exactly.
+- FEATURE 3 — COMMAND CENTER INCIDENT FILTERS (r7 remaining idea #3):
+  * FilterChipRow segmented chips with per-option counts (zero-count options disabled): SEVERITY (All/Critical/High/Medium/Low/FP), STATUS (All/Open/Investigating/Contained/Resolved), VERDICT (Any/Genuine/False positive/Under review); client-side over the ranked table; live "N of M shown" (emerald when filtering) + "Clear" button + dedicated no-match empty state with recovery button; a11y: role=group + aria-pressed + aria-live.
+  * Browser-verified: Critical → 1 row ("1 of 5 shown"); Critical+Genuine combined → 1 row; Clear → 5 rows; Critical+Open → empty state + "Clear filters" recovery works.
+- FEATURE 4 — KEYBOARD SHORTCUTS HELP DIALOG:
+  * soc-store: shortcutsOpen/setShortcutsOpen; new src/components/soc/shortcuts-dialog.tsx (grouped Navigation/Global/Tables & graph lists with kbd chips); page.tsx "?" key opens (input/textarea/select/contentEditable-safe, modifier-safe); footer gains clickable [?] SHORTCUTS hint button. Verified: "?" opens, footer button opens, Esc closes.
+- STYLING (mandatory polish):
+  * KPI cards: hover lift (-translate-y-px) + soft shadow + icon scale-105 micro-interaction; big numbers now animate on change (keyed motion.span, y+fade 0.3s, aria-live=polite) — visible when simulation or polling updates counts.
+  * Incident rows: 2px severity-colored inset stripe on the left edge (severityStyle hex: red/amber/yellow/emerald/slate) — instant severity scanning aligned with badge colors.
+  * Watchlist: coverage strip + hit chips styled as above; Bulk paste button matches header outline style.
+  * Filter chips: emerald glow (shadow ring) when active, hover tint, count pill inside chip.
+- BUGFIX (self-inflicted, caught by QA): while rewriting /api/watchlist/route.ts for hit counters I accidentally dropped the POST handler → 405 on single add (UI + curl). Restored POST (validation, 409 dup, refreshIntel) + missing validateWatchlistEntry import; browser-verified single-add round-trip (toast + row + 409 dup + cleanup).
+- Checks: bun run lint clean; bunx tsc --noEmit clean for src/; zero browser console errors after fresh reload + 1-5 sweep; recent dev.log all 200s; mobile 375px no overflow.
+
+Stage Summary:
+- New capabilities: bulk IOC paste (dialog + shared parser + bulk route), per-IOC alert hit counters + coverage stats, Command Center incident table filters (severity/status/verdict with counts), keyboard-shortcuts help ("?" / footer), animated KPI values + severity row stripes.
+- r7 "remaining ideas" progress: bulk paste DONE, hit counters DONE, CC severity/status filters DONE. Still open: drag node repositioning (graph), feed pagination (server limit support exists; 40-alert demo doesn't need it).
+- DB state: 40 alerts / 8 incidents (INC-1001 analyzed, Contained) / watchlist 3 items (5 total hits) / 38 unacked; simulation OFF.
+- Risks: none known. Hit counting is substring-based on metadata/description (fine at demo scale; a domain could theoretically substring-match a longer hostname — acceptable for MVP, could be tightened later).
+- Next-phase suggestions: graph drag-node repositioning, watchlist IOC type filters/sort, alert-drawer "copy IOC to watchlist" shortcut, e2e smoke script of the 5 core flows.

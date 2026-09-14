@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
+  Crosshair,
   Fingerprint,
   Globe,
   Loader2,
@@ -12,10 +13,19 @@ import {
   ShieldBan,
   Trash2,
   TriangleAlert,
+  Upload,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -25,7 +35,13 @@ import {
 } from "@/components/ui/select";
 import { apiGet, apiSend } from "@/lib/api-client";
 import { timeAgo } from "@/lib/ui-helpers";
-import type { WatchlistItemDTO, WatchlistListResult, WatchlistResult } from "@/lib/types";
+import { parseIocText } from "@/lib/watchlist-parse";
+import type {
+  WatchlistBulkResult,
+  WatchlistItemDTO,
+  WatchlistListResult,
+  WatchlistResult,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const TYPE_META: Record<string, { label: string; placeholder: string; icon: typeof Globe }> = {
@@ -34,27 +50,41 @@ const TYPE_META: Record<string, { label: string; placeholder: string; icon: type
   hash: { label: "File hash", placeholder: "e.g. e3b0c442…", icon: Fingerprint },
 };
 
+const SAMPLE_PASTE = `# one IOC per line — type auto-detected, or "type,value" rows
+198.51.100.23
+203.0.113.198
+domain,c2.bad-actor.example.net
+d41d8cd98f00b204e9800998ecf8427e`;
+
 /**
  * Analyst IOC Watchlist — add/remove custom malicious indicators.
  * Entries merge into the runtime intel feed: future correlations score them
  * as "known malicious IOC match" and the Threat Graph flags them red.
+ * Each row shows how many stored alerts reference the IOC (hit counter).
  */
 export function WatchlistCard() {
   const queryClient = useQueryClient();
   const [type, setType] = useState<"ip" | "domain" | "hash">("ip");
   const [value, setValue] = useState("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
 
   const listQuery = useQuery({
     queryKey: ["watchlist"],
     queryFn: () => apiGet<WatchlistListResult>("/api/watchlist"),
+    refetchInterval: 30_000, // hit counters refresh with new alerts
   });
   const items = listQuery.data?.items ?? [];
+  const stats = listQuery.data?.stats;
+
+  const invalidate = () =>
+    void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
 
   const addMutation = useMutation({
     mutationFn: (payload: { type: string; value: string }) =>
       apiSend<WatchlistResult>("/api/watchlist", "POST", payload),
     onSuccess: (d) => {
-      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      invalidate();
       setValue("");
       toast.success("IOC added to watchlist", { description: d.message });
     },
@@ -66,11 +96,33 @@ export function WatchlistCard() {
   const removeMutation = useMutation({
     mutationFn: (id: string) => apiSend<WatchlistResult>(`/api/watchlist/${id}`, "DELETE"),
     onSuccess: (d) => {
-      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      invalidate();
       toast.success("IOC removed", { description: d.message });
     },
     onError: (err: Error) => {
       toast.error("Could not remove IOC", { description: err.message });
+    },
+  });
+
+  const bulkMutation = useMutation({
+    mutationFn: (text: string) =>
+      apiSend<WatchlistBulkResult>("/api/watchlist/bulk", "POST", { text }),
+    onSuccess: (d) => {
+      invalidate();
+      setBulkOpen(false);
+      setBulkText("");
+      const dupNote = d.duplicatesCount
+        ? {
+            description: `${d.duplicatesCount} skipped — ${d.duplicates
+              .slice(0, 2)
+              .map((x) => x.reason)
+              .join("; ")}${d.duplicatesCount > 2 ? "…" : ""}`,
+          }
+        : undefined;
+      toast.success(d.message, dupNote);
+    },
+    onError: (err: Error) => {
+      toast.error("Bulk import failed", { description: err.message });
     },
   });
 
@@ -82,6 +134,10 @@ export function WatchlistCard() {
     addMutation.mutate({ type, value: value.trim() });
   };
 
+  // live preview of the bulk paste
+  const bulkPreview = useMemo(() => parseIocText(bulkText), [bulkText]);
+  const bulkValid = bulkPreview.parsed.length;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -90,7 +146,7 @@ export function WatchlistCard() {
     >
       <Card className="gap-3 rounded-xl">
         <CardHeader className="pb-1">
-          <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             <span className="flex size-8 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
               <ShieldBan className="size-4 text-emerald-400" aria-hidden="true" />
             </span>
@@ -100,6 +156,17 @@ export function WatchlistCard() {
                 {items.length}
               </span>
             )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="ml-auto min-h-8 gap-1.5 border-border px-2.5 text-[11px] text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+              onClick={() => setBulkOpen(true)}
+              aria-label="Bulk import indicators from pasted text"
+            >
+              <Upload className="size-3.5" aria-hidden="true" />
+              Bulk paste
+            </Button>
           </CardTitle>
           <CardDescription className="text-xs">
             Your indicators join the intel feed — future correlations score them as known-malicious
@@ -107,6 +174,34 @@ export function WatchlistCard() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {/* coverage stat strip */}
+          {stats && stats.itemCount > 0 && (
+            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-2.5 py-1.5" role="status" aria-label="Watchlist coverage">
+              <Crosshair className="size-3.5 shrink-0 text-emerald-400/80" aria-hidden="true" />
+              <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                coverage
+              </span>
+              <span className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                <span className="font-bold text-foreground/90">{stats.itemCount} indicators</span>
+                <span aria-hidden="true" className="text-muted-foreground/50">·</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-bold",
+                    stats.totalHits > 0
+                      ? "border-red-500/40 bg-red-500/10 text-red-300"
+                      : "border-border bg-background/60 text-muted-foreground"
+                  )}
+                >
+                  {stats.totalHits} alert hit{stats.totalHits === 1 ? "" : "s"}
+                </span>
+                <span aria-hidden="true" className="text-muted-foreground/50">·</span>
+                <span className="text-muted-foreground">
+                  {stats.itemsWithHits}/{stats.itemCount} matched
+                </span>
+              </span>
+            </div>
+          )}
+
           {/* add form */}
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="sm:w-32">
@@ -187,6 +282,109 @@ export function WatchlistCard() {
           )}
         </CardContent>
       </Card>
+
+      {/* bulk import dialog */}
+      <Dialog open={bulkOpen} onOpenChange={(o) => !o && setBulkOpen(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Upload className="size-4 text-emerald-400" aria-hidden="true" />
+              Bulk import indicators
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              One IOC per line — type is auto-detected (IPv4 / hex hash / domain).{" "}
+              <code className="rounded bg-muted px-1 font-mono text-[10px]">type,value</code> rows
+              and <code className="rounded bg-muted px-1 font-mono text-[10px]">#</code> comments
+              are supported. Max 200 lines.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="bulk-ioc-text" className="sr-only">
+              Indicator list
+            </label>
+            <textarea
+              id="bulk-ioc-text"
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={SAMPLE_PASTE}
+              rows={7}
+              spellCheck={false}
+              autoComplete="off"
+              className="soc-scroll w-full resize-y rounded-lg border border-border bg-background/60 px-3 py-2 font-mono text-xs leading-relaxed text-foreground/90 placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px]" aria-live="polite">
+              {bulkText.trim() ? (
+                <>
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-bold",
+                      bulkValid > 0
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                        : "border-red-500/40 bg-red-500/10 text-red-300"
+                    )}
+                  >
+                    {bulkValid} valid
+                  </span>
+                  {bulkPreview.skipped.length > 0 && (
+                    <span
+                      className="text-muted-foreground"
+                      title={bulkPreview.skipped.map((s) => `L${s.line}: ${s.reason}`).join("\n")}
+                    >
+                      {bulkPreview.skipped.length} skipped (hover for reasons)
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted-foreground">paste indicators to preview</span>
+              )}
+              <button
+                type="button"
+                className="ml-auto text-muted-foreground underline-offset-2 transition-colors hover:text-emerald-300 hover:underline"
+                onClick={() => setBulkText(SAMPLE_PASTE)}
+              >
+                insert sample
+              </button>
+            </div>
+            {bulkPreview.skipped.length > 0 && bulkText.trim() && (
+              <ul className="soc-scroll max-h-16 overflow-y-auto rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 font-mono text-[10px] text-amber-200/90" aria-label="Skipped lines">
+                {bulkPreview.skipped.slice(0, 8).map((s, i) => (
+                  <li key={`${s.line}-${i}`}>
+                    L{s.line}: {s.reason}
+                  </li>
+                ))}
+                {bulkPreview.skipped.length > 8 && (
+                  <li className="text-muted-foreground">+{bulkPreview.skipped.length - 8} more…</li>
+                )}
+              </ul>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-9 text-xs"
+              onClick={() => setBulkOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="min-h-9 gap-1.5 border-emerald-500/50 bg-emerald-500/15 font-semibold text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+              disabled={bulkValid === 0 || bulkMutation.isPending}
+              onClick={() => bulkMutation.mutate(bulkText)}
+            >
+              {bulkMutation.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Upload className="size-3.5" aria-hidden="true" />
+              )}
+              Import {bulkValid > 0 ? bulkValid : ""}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }
@@ -210,11 +408,31 @@ function WatchlistRow({
       )}
     >
       <Icon className="size-3.5 shrink-0 text-red-400/80" aria-hidden="true" />
-      <span className="truncate font-mono text-xs text-foreground/90">{item.value}</span>
+      <span className="truncate font-mono text-xs text-foreground/90" title={item.value}>
+        {item.value}
+      </span>
       <span className="shrink-0 rounded border border-border bg-background/60 px-1 py-px font-mono text-[9px] uppercase text-muted-foreground">
         {item.type}
       </span>
-      <span className="ml-auto hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
+      {/* hit counter */}
+      <span
+        title={
+          item.hits > 0
+            ? `${item.hits} stored alert${item.hits === 1 ? "" : "s"} reference this indicator`
+            : "No stored alerts reference this indicator yet"
+        }
+        className={cn(
+          "ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[9px] font-bold",
+          item.hits > 0
+            ? "border-red-500/40 bg-red-500/10 text-red-300"
+            : "border-border bg-background/60 text-muted-foreground/70"
+        )}
+        aria-label={`${item.hits} alert hits`}
+      >
+        <Crosshair className="size-2.5" aria-hidden="true" />
+        {item.hits}
+      </span>
+      <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground lg:inline">
         {timeAgo(item.createdAt)}
       </span>
       <Button

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import {
   CircleAlert,
   FileDown,
   FileText,
+  FilterX,
   Inbox,
   Send,
   ShieldAlert,
@@ -123,16 +124,27 @@ function KpiCard({
   const t = KPI_TONES[tone];
   return (
     <motion.div {...fadeUp} transition={{ duration: 0.35, delay }}>
-      <Card className={cn("border-l-2 p-4 transition-colors hover:border-emerald-500/30 hover:bg-card/80", t.border)}>
+      <Card className={cn(
+        "group border-l-2 p-4 transition-all duration-200 hover:-translate-y-px hover:bg-card/80 hover:shadow-[0_4px_20px_rgba(0,0,0,0.25)]",
+        t.border
+      )}>
         {/* header row: label + icon; value/sub get the full card width below (no truncation) */}
         <div className="flex items-start justify-between gap-2">
           <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground sm:text-[11px]">{label}</p>
-          <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border", t.icon)}>
+          <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105", t.icon)}>
             <Icon className="size-4.5" aria-hidden="true" />
           </span>
         </div>
-        <p className={cn("mt-0.5 font-mono text-3xl font-bold tabular-nums", t.value)}>
-          {formatCount(value)}
+        <p aria-live="polite" className={cn("mt-0.5 font-mono text-3xl font-bold tabular-nums", t.value)}>
+          <motion.span
+            key={value}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="inline-block"
+          >
+            {formatCount(value)}
+          </motion.span>
         </p>
         {sub && <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</p>}
       </Card>
@@ -353,10 +365,137 @@ function ChartsRow({ data }: { data: DashboardSummary }) {
 // Ranked incident table
 // ----------------------------------------------------------------------
 
+const SEVERITY_FILTERS: { key: SeverityFilterKey; label: string }[] = [
+  { key: "all", label: "All severities" },
+  { key: "Critical", label: "Critical" },
+  { key: "High", label: "High" },
+  { key: "Medium", label: "Medium" },
+  { key: "Low", label: "Low" },
+  { key: "False Positive", label: "FP" },
+];
+const STATUS_FILTERS: { key: StatusFilterKey; label: string }[] = [
+  { key: "all", label: "All statuses" },
+  { key: "Open", label: "Open" },
+  { key: "Investigating", label: "Investigating" },
+  { key: "Contained", label: "Contained" },
+  { key: "Resolved", label: "Resolved" },
+];
+const CLASS_FILTERS: { key: ClassFilterKey; label: string }[] = [
+  { key: "all", label: "Any verdict" },
+  { key: "Genuine Threat", label: "Genuine" },
+  { key: "False Positive", label: "False positive" },
+  { key: "Under Review", label: "Under review" },
+];
+type SeverityFilterKey = "all" | IncidentDTO["severity"];
+type StatusFilterKey = "all" | IncidentDTO["status"];
+type ClassFilterKey = "all" | "Genuine Threat" | "False Positive" | "Under Review";
+
+/** Segmented filter chip row with per-option counts (styled like the feed's chips). */
+function FilterChipRow<K extends string>({
+  label,
+  options,
+  counts,
+  active,
+  onChange,
+}: {
+  label: string;
+  options: { key: K; label: string }[];
+  counts: Record<string, number>;
+  active: K;
+  onChange: (k: K) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label={`Filter by ${label.toLowerCase()}`}>
+      <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60">
+        {label}
+      </span>
+      <div className="flex flex-wrap items-center gap-1">
+        {options.map((opt) => {
+          const isActive = active === opt.key;
+          const count = opt.key === "all" ? undefined : counts[opt.key] ?? 0;
+          const disabled = opt.key !== "all" && count === 0;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => onChange(opt.key)}
+              disabled={disabled}
+              aria-pressed={isActive}
+              aria-label={`Filter by ${opt.label.toLowerCase()}`}
+              className={cn(
+                "inline-flex min-h-7 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold transition-all",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isActive
+                  ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.15)]"
+                  : disabled
+                    ? "cursor-not-allowed border-border/50 bg-transparent text-muted-foreground/30"
+                    : "border-border bg-background/40 text-muted-foreground hover:border-emerald-500/30 hover:text-foreground"
+              )}
+            >
+              {opt.label}
+              {count !== undefined && (
+                <span
+                  className={cn(
+                    "rounded-full px-1 text-[9px] leading-3.5 tabular-nums",
+                    isActive ? "bg-emerald-500/25 text-emerald-200" : "bg-muted text-muted-foreground"
+                  )}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
   const openIncident = useSocStore((s) => s.openIncident);
   const [exporting, setExporting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilterKey>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilterKey>("all");
+  const [classFilter, setClassFilter] = useState<ClassFilterKey>("all");
+
+  // derive filter option counts from the (already ranked) incident list
+  const sevCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const i of incidents) m[i.severity] = (m[i.severity] ?? 0) + 1;
+    return m;
+  }, [incidents]);
+  const statusCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const i of incidents) m[i.status] = (m[i.status] ?? 0) + 1;
+    return m;
+  }, [incidents]);
+  const classCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const i of incidents) {
+      const k = i.classification || "Under Review";
+      m[k] = (m[k] ?? 0) + 1;
+    }
+    return m;
+  }, [incidents]);
+
+  const filtered = useMemo(
+    () =>
+      incidents.filter(
+        (i) =>
+          (severityFilter === "all" || i.severity === severityFilter) &&
+          (statusFilter === "all" || i.status === statusFilter) &&
+          (classFilter === "all" || (i.classification || "Under Review") === classFilter)
+      ),
+    [incidents, severityFilter, statusFilter, classFilter]
+  );
+  const filtersActive =
+    severityFilter !== "all" || statusFilter !== "all" || classFilter !== "all";
+  const clearFilters = () => {
+    setSeverityFilter("all");
+    setStatusFilter("all");
+    setClassFilter("all");
+  };
 
   const fetchAllIncidents = async (): Promise<IncidentDTO[]> => {
     const all = await apiGet<unknown>("/api/incidents");
@@ -436,8 +575,8 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
     <motion.section {...fadeUp} transition={{ duration: 0.4, delay: 0.25 }} aria-label="Priority incidents">
       <Card className="gap-0 rounded-xl p-0">
         <CardHeader className="border-b border-border/70 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
+            <div className="min-w-0">
               <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                 <Siren className="size-4 text-red-400" aria-hidden="true" />
                 Priority Incidents
@@ -446,39 +585,114 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                 Ranked by threat score — click a row to open the investigation view
               </CardDescription>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="min-h-9 gap-1.5 border-border text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+                className="min-h-9 gap-1.5 border-border px-2.5 text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
                 onClick={() => void exportBriefing()}
                 disabled={exportingPdf}
                 aria-label="Export situation briefing pack as PDF"
+                title="Export situation briefing pack as PDF"
               >
                 <FileText className={exportingPdf ? "size-3.5 animate-pulse" : "size-3.5"} aria-hidden="true" />
-                Briefing .pdf
+                <span className="hidden sm:inline">Briefing .pdf</span>
+                <span className="sr-only sm:hidden">Briefing PDF</span>
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="min-h-9 gap-1.5 border-border text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+                className="min-h-9 gap-1.5 border-border px-2.5 text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
                 onClick={() => void exportCsv()}
                 disabled={exporting}
                 aria-label="Export all incidents as CSV"
+                title="Export all incidents as CSV"
               >
                 <FileDown className={exporting ? "size-3.5 animate-pulse" : "size-3.5"} aria-hidden="true" />
-                Export CSV
+                <span className="hidden sm:inline">Export CSV</span>
+                <span className="sr-only sm:hidden">Export CSV</span>
               </Button>
             </div>
           </div>
+
+          {/* filter bar */}
+          {incidents.length > 0 && (
+            <div
+              className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2"
+              role="group"
+              aria-label="Incident filters"
+            >
+              <FilterChipRow
+                label="Severity"
+                options={SEVERITY_FILTERS}
+                counts={sevCounts}
+                active={severityFilter}
+                onChange={setSeverityFilter}
+              />
+              <FilterChipRow
+                label="Status"
+                options={STATUS_FILTERS}
+                counts={statusCounts}
+                active={statusFilter}
+                onChange={setStatusFilter}
+              />
+              <FilterChipRow
+                label="Verdict"
+                options={CLASS_FILTERS}
+                counts={classCounts}
+                active={classFilter}
+                onChange={setClassFilter}
+              />
+              <div className="ml-auto flex min-h-7 items-center gap-2">
+                <span
+                  className={cn(
+                    "font-mono text-[10px] uppercase tracking-wider",
+                    filtersActive ? "text-emerald-300" : "text-muted-foreground/70"
+                  )}
+                  aria-live="polite"
+                >
+                  {filtersActive ? `${filtered.length} of ${incidents.length} shown` : `${incidents.length} incidents`}
+                </span>
+                {filtersActive && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Clear all incident filters"
+                    className="min-h-7 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                    onClick={clearFilters}
+                  >
+                    <FilterX className="size-3" aria-hidden="true" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           {incidents.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               No incidents correlated yet — alerts will be grouped automatically.
             </p>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-10">
+              <p className="text-sm text-muted-foreground">
+                No incidents match the current filters.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-9 gap-1.5 text-xs text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-300"
+                onClick={clearFilters}
+              >
+                <FilterX className="size-3.5" aria-hidden="true" />
+                Clear filters
+              </Button>
+            </div>
           ) : (
             <div className="soc-scroll max-h-[520px] overflow-auto">
               <Table>
@@ -496,7 +710,7 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {incidents.map((inc) => {
+                  {filtered.map((inc) => {
                     const prio = priorityOf(inc.severity);
                     return (
                       <TableRow
@@ -515,7 +729,10 @@ function IncidentTable({ incidents }: { incidents: IncidentDTO[] }) {
                         )}
                         aria-label={`Open incident ${inc.incidentId}: ${inc.title}`}
                       >
-                        <TableCell className="pl-4">
+                        <TableCell
+                          className="pl-4"
+                          style={{ boxShadow: `inset 2px 0 0 ${severityStyle(inc.severity).hex}` }}
+                        >
                           <span className="flex items-center gap-1.5">
                             {inc.severity === "Critical" && (
                               <span className="relative flex size-1.5 shrink-0" aria-hidden="true">

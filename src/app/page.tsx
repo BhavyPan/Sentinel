@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SocHeader } from "@/components/soc/header";
 import { SocFooter } from "@/components/soc/footer";
 import { CommandPalette } from "@/components/soc/command-palette";
+import { ShortcutsDialog } from "@/components/soc/shortcuts-dialog";
 import { CommandCenter } from "@/components/soc/tabs/command-center";
 import { ThreatFeed } from "@/components/soc/tabs/threat-feed";
 import { ThreatGraph } from "@/components/soc/tabs/threat-graph";
@@ -31,6 +32,7 @@ const TAB_ORDER: SocTab[] = ["command", "feed", "graph", "analysis", "copilot"];
 export default function Page() {
   const activeTab = useSocStore((s) => s.activeTab);
   const setActiveTab = useSocStore((s) => s.setActiveTab);
+  const setShortcutsOpen = useSocStore((s) => s.setShortcutsOpen);
 
   // Restore the persisted tab once, after hydration (avoids SSR markup mismatch)
   useEffect(() => {
@@ -38,7 +40,8 @@ export default function Page() {
     if (saved && saved !== "command") setActiveTab(saved);
   }, [setActiveTab]);
 
-  // Keyboard shortcuts: 1-5 switch views (ignored while typing in form fields; ⌘K handled by the palette)
+  // Keyboard shortcuts: 1-5 switch views + "?" opens shortcuts help
+  // (ignored while typing in form fields; ⌘K handled by the palette)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -47,17 +50,23 @@ export default function Page() {
         const tag = target.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
       }
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
       const idx = ["1", "2", "3", "4", "5"].indexOf(e.key);
       if (idx !== -1) setActiveTab(TAB_ORDER[idx]);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setActiveTab]);
+  }, [setActiveTab, setShortcutsOpen]);
 
   return (
     <div className="flex min-h-screen flex-col">
       <SocHeader />
       <CommandPalette />
+      <ShortcutsDialog />
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-4 sm:px-6 sm:py-6">
         <Tabs

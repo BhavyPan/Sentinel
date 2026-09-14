@@ -37,17 +37,21 @@ interface SocState {
   activeTab: SocTab;
   /** db id of the incident selected in the Analysis tab (null = auto-pick first) */
   selectedIncidentId: string | null;
+  /** keyboard shortcuts help dialog ("?" / footer hint) */
+  shortcutsOpen: boolean;
   setActiveTab: (tab: SocTab) => void;
   selectIncident: (incidentDbId: string) => void;
   /** jump to Analysis tab with a specific incident */
   openIncident: (incidentDbId: string) => void;
   /** jump to Copilot tab with a pre-filled question */
   askQuestion: (question: string) => void;
+  setShortcutsOpen: (open: boolean) => void;
 }
 
 export const useSocStore = create<SocState>((set) => ({
   activeTab: "command",
   selectedIncidentId: null,
+  shortcutsOpen: false,
   setActiveTab: (tab) => {
     persistTab(tab);
     set({ activeTab: tab });
@@ -62,4 +66,5 @@ export const useSocStore = create<SocState>((set) => ({
     persistTab("copilot");
     set({ activeTab: "copilot" });
   },
+  setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
 }));

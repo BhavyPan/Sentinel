@@ -85,10 +85,29 @@ export interface WatchlistItemDTO {
   value: string;
   note: string;
   createdAt: string;
+  /** number of stored alerts referencing this IOC (ip column or metadata/description text) */
+  hits: number;
+}
+
+export interface WatchlistHitStats {
+  itemCount: number;
+  totalHits: number;
+  itemsWithHits: number;
+  lastAddedAt: string | null;
 }
 
 export interface WatchlistListResult {
   items: WatchlistItemDTO[];
+  stats?: WatchlistHitStats;
+}
+
+/** POST /api/watchlist/bulk → response */
+export interface WatchlistBulkResult {
+  added: number;
+  duplicatesCount: number;
+  duplicates: { line: number; reason: string }[];
+  items: WatchlistItemDTO[];
+  message: string;
 }
 
 /** POST /api/watchlist + DELETE /api/watchlist/[id] → response */

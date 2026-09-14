@@ -1,21 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { refreshIntel, listWatchlist, validateWatchlistEntry } from "@/lib/watchlist";
+import type { WatchlistHitStats } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/watchlist — analyst-curated IOC list */
-export async function GET() {
-  try {
-    const items = await listWatchlist();
-    return NextResponse.json({ items });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to load watchlist";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
-
-/** POST /api/watchlist — add an IOC (validated, deduped by unique value) */
+/** POST /api/watchlist — add a single IOC (validated, deduped by unique value) */
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as { type?: string; value?: string; note?: string } | null;
@@ -48,11 +38,51 @@ export async function POST(req: Request) {
         value: created.value,
         note: created.note,
         createdAt: created.createdAt.toISOString(),
+        hits: 0,
       },
       message: `${created.value} added to the watchlist — future correlations will treat it as malicious intel`,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to add watchlist item";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  try {
+    await refreshIntel(); // keep runtime intel in sync for consumers
+    const items = await listWatchlist();
+
+    const alerts = await db.alert.findMany({
+      select: { ip: true, description: true, metadata: true },
+    });
+    const alertBlobs = alerts.map((a) => ({
+      ip: a.ip,
+      lower: `${a.metadata}\n${a.description}`.toLowerCase(),
+    }));
+
+    let totalHits = 0;
+    let itemsWithHits = 0;
+    const withHits = items.map((it) => {
+      const needle = it.type === "ip" ? it.value : it.value.toLowerCase();
+      let hits = 0;
+      for (const a of alertBlobs) {
+        if ((a.ip && a.ip === needle) || a.lower.includes(needle)) hits++;
+      }
+      totalHits += hits;
+      if (hits > 0) itemsWithHits++;
+      return { ...it, hits };
+    });
+
+    const stats: WatchlistHitStats = {
+      itemCount: withHits.length,
+      totalHits,
+      itemsWithHits,
+      lastAddedAt: withHits[0]?.createdAt ?? null,
+    };
+    return NextResponse.json({ items: withHits, stats });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to load watchlist";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
