@@ -1,6 +1,6 @@
 # SentinelAI — Worklog (D2: Threat Intelligence Correlation & Alert Prioritisation Assistant)
 
-Project: Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui + Prisma (SQLite) + z-ai-web-dev-sdk (backend LLM).
+Project: Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui + Prisma/PostgreSQL + Groq (backend LLM).
 Goal: Build the D2 hackathon MVP "SentinelAI" — ingest multi-source alerts, normalize, correlate into incidents, classify genuine threats vs false positives, prioritize, map MITRE ATT&CK, generate BLUF summaries, AI Copilot. Four screens in a single page route: Command Center, Threat Feed, Incident Analysis, AI Copilot.
 
 ---
@@ -9,7 +9,7 @@ Agent: Z.ai Code (main)
 Task: Foundation setup — worklog, Prisma schema, db push, shared types, MITRE data, IOC lists, seed demo dataset.
 
 Work Log:
-- Reviewed project scaffold (Next.js 16 App Router, shadcn/ui present, Prisma + SQLite at db/custom.db, z-ai-web-dev-sdk installed).
+- Reviewed the original project scaffold and later migrated persistence to Supabase PostgreSQL and AI transport to Groq.
 - Rewrote prisma/schema.prisma with Alert, Incident, ChatMessage models.
 - Pushed schema to SQLite via `bun run db:push`.
 - Defined shared TypeScript API contract in src/lib/types.ts (AlertDTO, IncidentDTO, dashboard summary shapes) — this is the binding contract for backend (Task 2-a) and frontend (Task 2-b) agents.
@@ -383,3 +383,39 @@ Stage Summary:
 - r9 "next-phase suggestions" progress: copilot deep-links DONE (drawer+analysis both). Still open: graph drag-node repositioning, incident compare/split view, e2e smoke script, feed pagination.
 - Risks: none known. IncidentChip uses the shared incidents cache — one extra GET /api/incidents per copilot mount (cached, ~20ms). Dev-server silent death remains an environmental watch item (restarted; document if it recurs).
 - Next-phase suggestions: graph drag-node repositioning, copilot follow-up suggestion chips per answer, incident compare/split view, e2e smoke script of the 5 core flows.
+---
+Task ID: r11 (SentinelAI D2 Completion & Smoke Test Resolution)
+Agent: Antigravity
+Task: Audit completed work against SentinelAI_D2_AI_Build_Specification.pdf and complete remaining tasks from Codex session
+
+Work Log:
+- Analyzed prior tasks from the active Codex session (`rollout-2026-09-15T10-02-00-01a0a356-0c0c-7961-981e-e7e987772f68.jsonl`):
+  * D2 features F1-F9 implemented and audited in `BUILD_AUDIT.md`.
+  * External LLM integration implemented with structured output validation, offline fallback, and configurable API settings (later replaced by a provider-neutral transport).
+  * Acceptance suite in `scripts/acceptance.ts` (18 checks) passing.
+  * Regression test suite in `tests/sentinel.test.ts` (18 unit tests) passing.
+  * Codex encountered a usage limit right after the browser smoke test failed with:
+    `AssertionError [ERR_ASSERTION]: Incident Analysis mobile overflow` at line 49 in `scripts/browser-smoke.mjs`.
+- Identified root cause of mobile viewport (375px) overflow in Incident Analysis tab:
+  * In `src/components/soc/tabs/incident-analysis.tsx`:
+    1. Action buttons container had `ml-auto flex items-center gap-1.5` without `flex-wrap`, forcing 4 wide buttons (~530px min-width) onto a single row.
+    2. BLUF report export buttons (`Copy BLUF`, `Report .txt`, `Report .pdf`) lacked `flex-wrap` and responsive margin.
+    3. `IncidentList` `<nav>` container lacked `w-full min-w-0 max-w-full`, allowing horizontal child cards (`w-64 shrink-0`) to push the flex cross-axis.
+    4. Outer container lacked `w-full min-w-0 max-w-full`.
+    5. Detail title and alert descriptions lacked `break-words`.
+- Applied responsive fixes in `src/components/soc/tabs/incident-analysis.tsx`:
+  * Updated action buttons to `flex flex-wrap items-center gap-1.5 sm:ml-auto`.
+  * Updated BLUF buttons to `flex flex-wrap items-center gap-1.5 sm:ml-auto`.
+  * Added `w-full min-w-0 max-w-full` to `IncidentList` and outer container.
+  * Added `break-words` to title and descriptions.
+- Rebuilt production standalone build via `npm run build` (Turbopack + TypeScript check clean).
+- Verified full verification suite:
+  * `npm test`: 18/18 passing.
+  * `npm run typecheck`: clean (0 errors).
+  * `npm run lint`: clean (0 warnings/errors).
+  * `npm run test:acceptance`: 18/18 passing against isolated test DB.
+  * `npm run test:browser`: all 5 screens (Command Center, Threat Feed, Incident Analysis, AI Copilot, Threat Graph) verified across desktop (1440x1000) and mobile (375x812) with zero overflow and zero page errors.
+
+Stage Summary:
+- Remaining task completed: Incident Analysis mobile viewport overflow resolved and browser smoke test suite passing.
+- Production readiness: All 18 unit tests, 18 acceptance tests, and 5-tab browser smoke tests passing with clean lint and typecheck.
