@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getDashboardSummary } from "@/lib/summary";
-import { copilotChat, type CopilotIncidentContext } from "@/lib/llm";
+import { getDashboardSummary, rankIncidents } from "@/lib/summary";
+import { copilotChat, localCopilot, type CopilotIncidentContext } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -31,39 +31,26 @@ export async function GET() {
 /** POST /api/copilot/chat — ask a question grounded in current incident data */
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { message?: unknown } | null;
+    const body = (await req.json().catch(() => null)) as { message?: unknown } | null;
     const question = typeof body?.message === "string" ? body.message.trim() : "";
     if (!question) {
       return NextResponse.json({ error: "Missing 'message'" }, { status: 400 });
     }
 
-    await db.chatMessage.create({ data: { role: "user", content: question } });
-
+    if (question.length > 4000) return NextResponse.json({ error: "Question is limited to 4000 characters" }, { status: 400 });
     const summary = await getDashboardSummary();
-    const topWithAlerts = await db.incident.findMany({
-      where: {
-        id: { in: summary.topIncidents.map((i) => i.id) },
-      },
-      include: { alerts: true },
-    });
-    const eventsById = new Map<string, string[]>();
-    for (const inc of topWithAlerts) {
-      eventsById.set(
-        inc.incidentId,
-        [...new Set(inc.alerts.map((a) => a.event))].slice(0, 5)
-      );
-    }
-    const incidents: CopilotIncidentContext[] = summary.topIncidents.slice(0, 8).map((i) => ({
-      incidentId: i.incidentId,
-      title: i.title,
-      severity: i.severity,
-      threatScore: i.threatScore,
-      confidence: i.confidence,
-      classification: i.classification,
-      alertCount: i.alertCount,
-      keyEvents: eventsById.get(i.incidentId) ?? [],
-      blufExcerpt: (i.bluf ?? "").slice(0, 160),
+    const allIncidents = rankIncidents(await db.incident.findMany({ include: { alerts: { orderBy: { timestamp: "asc" } } } }));
+    const incidents: CopilotIncidentContext[] = allIncidents.map((i) => ({
+      incidentId: i.incidentId, title: i.title, severity: i.severity, threatScore: i.threatScore,
+      confidence: i.confidence, classification: i.classification, status: i.status,
+      alertCount: i.alerts.length, keyEvents: [...new Set(i.alerts.map((a) => a.event))],
+      blufExcerpt: i.bluf ?? "", evidence: JSON.parse(i.evidence), recommendedActions: JSON.parse(i.recommendedActions),
+      alerts: i.alerts.slice(0, 30).map((a) => ({ ...a, timestamp: a.timestamp.toISOString() })),
     }));
+    // Explicitly requested cases are included even when outside the priority shortlist.
+    const requested = [...question.toUpperCase().matchAll(/(?:INC-|#)(\d+)/g)].map((m) => `INC-${m[1]}`);
+    const relevant = incidents.filter((i) => requested.includes(i.incidentId));
+    const snapshotIncidents = [...relevant, ...incidents.filter((i) => !requested.includes(i.incidentId))].slice(0, 20);
 
     const counts: Record<string, number | string | null> = {
       totalAlerts: summary.totalAlerts,
@@ -89,16 +76,13 @@ export async function POST(req: Request) {
         content: m.content,
       }));
 
-    const reply = await copilotChat(question, { counts, incidents }, history);
-    if (!reply) {
-      return NextResponse.json(
-        { error: "AI service unavailable — try again shortly" },
-        { status: 502 }
-      );
-    }
-
-    await db.chatMessage.create({ data: { role: "assistant", content: reply } });
-    return NextResponse.json({ reply });
+    const aiReply = await copilotChat(question, { counts, incidents: snapshotIncidents }, history);
+    const reply = aiReply ?? localCopilot(question, { counts, incidents });
+    await db.$transaction([
+      db.chatMessage.create({ data: { role: "user", content: question } }),
+      db.chatMessage.create({ data: { role: "assistant", content: reply } }),
+    ]);
+    return NextResponse.json({ reply, mode: aiReply ? "llm" : "local" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Chat failed";
     return NextResponse.json({ error: message }, { status: 500 });

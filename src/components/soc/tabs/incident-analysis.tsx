@@ -97,7 +97,7 @@ function IncidentList({
   return (
     <nav
       aria-label="Incident list"
-      className="soc-scroll flex gap-2 overflow-x-auto pb-1 lg:max-h-[calc(100vh-15rem)] lg:w-80 lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:pb-0"
+      className="soc-scroll flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-1 lg:max-h-[calc(100vh-15rem)] lg:w-80 lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:pb-0"
     >
       {incidents.map((inc) => {
         const sev = severityStyle(inc.severity);
@@ -255,7 +255,7 @@ function AttackTimeline({ incident }: { incident: IncidentDetailDTO }) {
                     <SourceChip source={a.source} sourceLabel={a.sourceLabel} />
                     <EventChip event={a.event} />
                   </div>
-                  <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">{a.description}</p>
+                  <p className="mt-1.5 break-words text-sm leading-relaxed text-foreground/90">{a.description}</p>
                   <p className="mt-1 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted-foreground">
                     {a.user && <span>user: {a.user}</span>}
                     {a.device && <span>device: {a.device}</span>}
@@ -541,7 +541,7 @@ function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
               <ShieldAlert className="size-3" aria-hidden="true" /> Deterministic Baseline
             </span>
           )}
-          <span className="ml-auto flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
             <Button
               type="button"
               size="sm"
@@ -580,7 +580,7 @@ function BlufReport({ incident }: { incident: IncidentDetailDTO }) {
               )}
               {pdfBusy ? "Building…" : "Report .pdf"}
             </Button>
-          </span>
+          </div>
         </div>
         <CardContent className="space-y-5 p-4 sm:p-6">
           <p className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground/90">
@@ -712,11 +712,16 @@ function DetailPane({ incidentId }: { incidentId: string }) {
     mutationFn: () => apiSend(`/api/incidents/${incidentId}/analyze`, "POST"),
     onSuccess: (data: unknown) => {
       let msg = "AI analysis complete — BLUF report ready.";
+      let llmUsed = true;
       if (data && typeof data === "object" && "message" in data) {
         const m = (data as { message: unknown }).message;
         if (typeof m === "string") msg = m;
       }
-      toast.success("Analysis complete", { description: msg });
+      if (data && typeof data === "object" && "llmUsed" in data) {
+        llmUsed = (data as { llmUsed: unknown }).llmUsed === true;
+      }
+      if (llmUsed) toast.success("AI analysis complete", { description: msg });
+      else toast.warning("Local analysis used", { description: msg });
       queryClient.invalidateQueries({ queryKey: ["incident", incidentId] });
       queryClient.invalidateQueries({ queryKey: ["incidents"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
@@ -778,7 +783,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
   if (!incident) return null;
 
   return (
-    <div className="flex min-w-0 flex-col gap-4 sm:gap-6">
+    <div className="flex min-w-0 max-w-full flex-col gap-4 sm:gap-6">
       {/* Header */}
       <motion.div
         key={incident.id}
@@ -797,7 +802,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
               </span>
             </div>
             <div>
-              <h2 className="text-lg font-bold leading-snug tracking-tight sm:text-xl">
+              <h2 className="break-words text-lg font-bold leading-snug tracking-tight sm:text-xl">
                 {incident.title}
               </h2>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -855,7 +860,7 @@ function DetailPane({ incidentId }: { incidentId: string }) {
                 </Select>
               </div>
 
-              <div className="ml-auto flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
                 <Button
                   type="button"
                   variant="outline"
@@ -1174,13 +1179,13 @@ export function IncidentAnalysis() {
   }
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
+    <div className="flex w-full min-w-0 max-w-full flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
       <IncidentList
         incidents={incidents}
         selectedId={activeId}
         onSelect={selectIncident}
       />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 max-w-full flex-1">
         <DetailPane incidentId={activeId} />
       </div>
     </div>

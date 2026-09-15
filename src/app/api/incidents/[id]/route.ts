@@ -1,3 +1,4 @@
+import { analystActions, reviewedBluf } from "@/lib/analyst-verdict";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { toIncidentDetailDTO } from "@/lib/summary";
@@ -48,7 +49,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const body = (await req.json()) as IncidentUpdatePayload | null;
+    const body = (await req.json().catch(() => null)) as IncidentUpdatePayload | null;
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
@@ -56,6 +57,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const data: {
       status?: string;
       classification?: string;
+      severity?: string;
+      bluf?: string;
+      recommendedActions?: string;
       explanation?: string;
     } = {};
 
@@ -82,6 +86,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const existing = await findIncident(id);
     if (!existing) {
       return NextResponse.json({ error: `Incident ${id} not found` }, { status: 404 });
+    }
+
+    if (data.classification) {
+      data.severity = data.classification === "False Positive" ? "False Positive" :
+        existing.threatScore >= 85 ? "Critical" : existing.threatScore >= 70 ? "High" : existing.threatScore >= 45 ? "Medium" : "Low";
+      if (existing.bluf) data.bluf = reviewedBluf(existing.bluf, data.classification).replace(/^SEVERITY:.*$/m, `SEVERITY: ${data.severity}`);
+      data.recommendedActions = JSON.stringify(analystActions(data.classification));
     }
 
     const actor = String(body.analyst ?? "").trim() || "Analyst";
