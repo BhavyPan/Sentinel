@@ -1,57 +1,96 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# =============================================================================
+# HACKATHON SUBMISSION — .gitignore
+# =============================================================================
+# IMPORTANT: Never commit secrets, credentials, or large binary files.
 
-# dependencies
-node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
+# ── Secrets & Environment ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+*.key
 *.pem
+*.p12
+secrets/
 
-# debug
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.venv/
+env/
+pip-log.txt
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.coverage
+htmlcov/
+
+# ── Node.js ───────────────────────────────────────────────────────────────────
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+.npm
+.yarn
+dist/
+.next/
+.nuxt/
+.output/
+.cache/
 
-# env files (can opt-in for committing if needed)
-.env*
+# ── Java / Maven / Gradle ────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+.gradle/
+build/
 
-# vercel
-.vercel
+# ── Go ────────────────────────────────────────────────────────────────────────
+vendor/
+*.exe
 
+# ── Rust ──────────────────────────────────────────────────────────────────────
+target/
+Cargo.lock  # remove this line if you want to commit lock file (recommended for apps)
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-.claude
-.z-ai-config
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+
+# ── IDEs & Editors ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ── Large Media Files (use demo-video-link.txt instead) ───────────────────────
+demo/*.mp4
+demo/*.mov
+demo/*.avi
+demo/*.mkv
+
+# ── Docker volumes / local data ───────────────────────────────────────────────
+data/
+logs/
 *.log
-dev.log
-dev.out.log
-test
-prompt
 
-server.log
-# Skills directory
-/skills/
-# Local acceptance artifacts
-.test-output/
-!.env.example
+# ── Jupyter Notebooks (optional: remove if you want to commit notebooks) ──────
+# .ipynb_checkpoints/
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+.terraform/
+*.tfstate
+*.tfstate.backup

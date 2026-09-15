@@ -1,81 +1,121 @@
-# SentinelAI
+# 🚀 [Your Project Title Here]
 
-D2 threat intelligence correlation and alert prioritisation MVP. Import security feeds, connect related alerts, review ranked incidents, inspect MITRE ATT&CK mappings and BLUF reports, and ask an optional external model about stored evidence. Application data is stored in Supabase PostgreSQL through Prisma.
+> ⚠️ **Replace everything in `[ ]` brackets with your actual content before submission.**
 
-## Run locally
+---
 
-Requires Node.js 20.9+ and npm. The application uses Next.js API routes and Supabase PostgreSQL through Prisma, so a separate FastAPI server is not needed.
+## 👥 Team
 
-```sh
-npm ci
-npm run db:generate
-npm run db:push
-npm run dev
+| Field | Value |
+|---|---|
+| **Team Name** | [Your Team Name] |
+| **Track** | [AI / DevOps / Sustainability / Open] |
+| **Team Lead** | [Name] — [email@ibm.com] |
+| **Members** | [Name 1], [Name 2], [Name 3] |
+
+---
+
+## 🎯 Problem Statement
+
+> In 2–3 sentences: What problem does your project solve? Who experiences this problem?
+
+[Describe the real-world problem your project addresses. Be specific about who the user is and what pain point they face.]
+
+---
+
+## 💡 Solution
+
+> In 2–3 sentences: What did you build? How does it solve the problem above?
+
+[Describe your solution clearly. Explain the core mechanism — what makes it work.]
+
+---
+
+## ✨ Key Features
+
+- **Feature 1:** [Brief description — e.g., "Real-time anomaly detection using watsonx.ai"]
+- **Feature 2:** [Brief description]
+- **Feature 3:** [Brief description]
+- **Feature 4:** [Optional]
+- **Feature 5:** [Optional]
+
+---
+
+## 🛠️ Tech Stack
+
+| Category | Technologies |
+|---|---|
+| **Languages** | [e.g., Python, TypeScript] |
+| **Frameworks** | [e.g., FastAPI, React] |
+| **IBM Technologies** | [e.g., watsonx.ai, IBM Bob, IBM Cloud] |
+| **Databases** | [e.g., PostgreSQL, Redis] |
+| **Other** | [e.g., Docker, GitHub Actions] |
+
+---
+
+## 📁 Repository Structure
+
+```
+├── src/                  # All source code
+├── docs/                 # Written documentation
+│   ├── problem-statement.md
+│   ├── solution-overview.md
+│   ├── architecture.md
+│   └── setup-guide.md
+├── demo/                 # Demo artifacts
+│   ├── screenshots/      # App screenshots
+│   └── demo-video-link.txt  # Link to demo video
+├── presentation/         # Slide deck
+└── submission.yaml       # Structured submission metadata
 ```
 
-Open http://localhost:3000. On a fresh checkout, copy `.env.example` to the ignored `.env.local` file and add the Supabase connection strings from **Supabase Dashboard → Connect**. Use the transaction pooler for `DATABASE_URL` and the session pooler or direct connection for `DIRECT_URL`. `db:push` does not automatically accept data loss.
+---
 
-### Optional external AI — Groq recommended
+## ⚡ How to Run
 
-The app supports any OpenAI-compatible chat API. Groq is recommended for this demo because it offers a rate-limited free plan and structured JSON output. Add a Groq API key to the untracked `.env.local` file:
+> **Copy these exact steps from your [`docs/setup-guide.md`](docs/setup-guide.md)**
 
-```dotenv
-AI_BASE_URL=https://api.groq.com/openai/v1
-AI_MODEL=openai/gpt-oss-20b
-AI_FALLBACK_MODELS=qwen/qwen3.8-27b,openai/gpt-oss-120b
-AI_API_KEY=your_key_here
-AI_MODE=auto
+```bash
+# 1. Clone the repo
+git clone https://github.com/[your-repo].git
+cd [your-repo]
+
+# 2. Install dependencies
+[your install command here]
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env with your values
+
+# 4. Run the project
+[your run command here]
 ```
 
-Restart the application after changing settings. Create a key in the [Groq Console](https://console.groq.com/keys). The selected default model supports Groq structured outputs.
+---
 
-The key stays on the server. Running AI Analysis sends the selected incident and its alerts to the configured provider. Copilot sends relevant stored incident context and recent conversation. Keep `AI_MODE=local` to disable all external AI calls.
+## 🖥️ Demo
 
-Without a key, or when the configured provider fails, the app shows a clearly labeled local response. Rule-based scores, classification, evidence, MITRE mappings and BLUF reports remain available. Local Copilot supports greetings, priority, incident briefs and false-positive summaries; it does not provide unrestricted AI conversation. Only successful, validated external analyses receive the AI-analyzed flag.
+| Artifact | Link |
+|---|---|
+| 📹 Demo Video | [See demo/demo-video-link.txt](demo/demo-video-link.txt) |
+| 🌐 Live Demo | [See demo/live-demo-url.txt](demo/live-demo-url.txt) |
+| 🖼️ Screenshots | [See demo/screenshots/](demo/screenshots/) |
+| 📊 Presentation | [See presentation/slides.pdf](presentation/) |
 
-### Production build
+---
 
-```sh
-npm run build
-npm start
-```
+## ⚠️ Known Limitations
 
-The build checks TypeScript and copies public/static assets into Next.js standalone output using a cross-platform Node script. For deployment, provide the pooled Supabase `DATABASE_URL`, the migration-only `DIRECT_URL`, and optional `AI_*` settings as server environment variables. The local start script loads the root environment settings before launching the standalone server.
+> Be honest — judges appreciate transparency over overclaiming.
 
-## Demo walkthrough
+- [Limitation 1: e.g., "Authentication is mocked — not production-ready"]
+- [Limitation 2: e.g., "Only tested on Chrome"]
+- [Limitation 3: e.g., "Feature X is scaffolded but not fully implemented"]
 
-1. Click **Load Demo Dataset** to import 29 alerts from SIEM JSON, EDR JSON, cyber-sensor CSV, satellite text and an intelligence report.
-2. Open **Command Center** to see severity counts and priority-ranked cases.
-3. Open the Critical administrator-compromise case in **Incident Analysis**. Inspect the failed logins, successful login and large download timeline, evidence, MITRE mapping and BLUF.
-4. Click **Run AI Analysis** for an external-model assessment when configured.
-5. Ask **AI Copilot**: “What should we investigate first and why?”
-6. Try file import, correlation, analyst status/notes, false-positive feedback, watchlist, graph, simulation and PDF report export.
+---
 
-Demo loading is idempotent when the bundled demo is already present and preserves imported alerts, chat history and analyst casework. Re-correlation retains stable case IDs for unchanged or growing groups. When groups merge, the case with the largest overlap survives and receives the other cases' audit events; retired case IDs no longer resolve. Changed evidence invalidates stale AI analysis while preserving analyst status and notes.
+## 🏅 What We're Most Proud Of
 
-## Feed formats
+[Tell the judges what part of your submission is strongest and worth paying close attention to.]
 
-- JSON: canonical `alert_id`, `source`, `timestamp`, `user`, `device`, `ip`, `event`, `description`, `raw_severity`, optional `metadata`; vendor EDR fields are also supported.
-- CSV: `alert_id,source,timestamp,user,device,ip,event,description,severity`; quote descriptions containing commas.
-- Satellite text: `[TAG] 2026-09-15T10:00:00Z SEV:low STATION :: description`.
-- Intelligence text: start with `INTELLIGENCE REPORT`, then `Published:` and `SUMMARY:` lines.
-
-Timestamps without a timezone use UTC. Imports accept up to 2 MB, validate required fields/IPs/severity, preserve metadata, and return row errors without discarding valid siblings. Duplicate alert IDs are skipped. After import, run correlation using the header action. The threat feed displays 50 alerts per page.
-
-## Verification
-
-```sh
-npm test
-npm run typecheck
-npm run lint
-npm run build
-```
-
-- Unit/regression suite checks the scoring and normalization rules, AI validation, and mocked provider transport. No live API key is required.
-- Run the development server and production build sequentially because Next.js shares build output.
-
-## Scope
-
-The nine required D2 features and four required screens are implemented, along with the original graph, simulation, watchlist, analyst workflow and PDF exports. See `BUILD_AUDIT.md` for the specification comparison.
-
-This is a hackathon MVP with synthetic threat intelligence, heuristic scores, shared Supabase case/chat storage and no authentication. A live external-model response requires a provider key and available quota; automated checks mock provider responses and do not verify external accounts or credentials.
+---
