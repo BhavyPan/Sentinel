@@ -18,7 +18,8 @@ export const metadata: Metadata = {
   description:
     "From thousands of alerts to one clear decision. Multi-source alert ingestion, correlation, MITRE ATT&CK mapping and AI-powered incident briefings.",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/logo.svg",
+    shortcut: "/logo.svg",
   },
 };
 
