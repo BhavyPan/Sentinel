@@ -16,6 +16,7 @@ export async function GET(req: Request) {
     const limitRaw = parseInt(searchParams.get("limit") || "200", 10);
     const limit = Math.max(1, Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200));
 
+    const offset = Math.max(0, Number.parseInt(searchParams.get("offset") || "0", 10) || 0);
     const rows = await db.alert.findMany({
       where: {
         ...(source ? { source } : {}),
@@ -25,7 +26,7 @@ export async function GET(req: Request) {
         ...(ack === "ack" ? { acknowledged: true } : {}),
         ...(ack === "unack" ? { acknowledged: false } : {}),
       },
-      orderBy: { timestamp: "desc" },
+      orderBy: [{ timestamp: "desc" }, { id: "asc" }],
     });
 
     const filtered = search
@@ -36,7 +37,7 @@ export async function GET(req: Request) {
         )
       : rows;
 
-    return NextResponse.json({ alerts: filtered.slice(0, limit).map(toAlertDTO) });
+    return NextResponse.json({ alerts: filtered.slice(offset, offset + limit).map(toAlertDTO), total: filtered.length, offset, limit, hasMore: offset + limit < filtered.length });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to list alerts";
     return NextResponse.json({ error: message }, { status: 500 });

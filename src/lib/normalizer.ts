@@ -3,6 +3,8 @@
  * Converts raw multi-format feeds (SIEM/EDR JSON, CSV, satellite text, intel report)
  * into one common NormalizedAlertInput structure, extracting IOCs on the way.
  */
+import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 import { isMaliciousDomain, isMaliciousHash, isMaliciousIp } from "./threat-intel";
 
 export type ParsedFormat = "json" | "csv" | "text";
@@ -82,8 +84,8 @@ function extractIocs(ipField: string | undefined, description: string): IocBundl
   const domains = new Set<string>();
   const hashes = new Set<string>();
 
-  for (const m of text.matchAll(IPV4_RE)) ips.add(m[0]);
-  if (ipField && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ipField)) ips.add(ipField);
+  for (const m of text.matchAll(IPV4_RE)) if (isIP(m[0])) ips.add(m[0]);
+  if (ipField && isIP(ipField)) ips.add(ipField);
 
   for (const m of text.matchAll(DOMAIN_RE)) {
     const token = m[0].toLowerCase().replace(/\.+$/, "");
@@ -103,7 +105,10 @@ function buildMetadata(
   extra?: Record<string, unknown>
 ): Record<string, unknown> {
   const metadata: Record<string, unknown> = { ...(extra || {}) };
-  const iocs = extractIocs(ipField, description);
+  delete metadata.iocMatch;
+  delete metadata.iocMatches;
+  const iocs = extractIocs(ipField, description + " " + JSON.stringify(extra ?? {}));
+  metadata.iocs = iocs;
   if (iocs.ips.length || iocs.domains.length || iocs.hashes.length) {
     metadata.iocs = iocs;
     const matches = [
@@ -120,7 +125,10 @@ function buildMetadata(
 }
 
 function parseTimestamp(value: unknown, context: string): Date {
-  const d = new Date(String(value));
+  let input = String(value ?? "");
+  // Zone-less ISO timestamps in imported feeds use UTC on every host.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(input)) input += "Z";
+  const d = new Date(input);
   if (Number.isNaN(d.getTime())) {
     throw new Error(`Invalid timestamp "${String(value)}" in ${context}`);
   }
@@ -133,6 +141,23 @@ function opt(v: unknown): string | undefined {
   return s === "" ? undefined : s;
 }
 
+function required(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Missing or invalid ${field}`);
+  return value.trim();
+}
+
+function checkedIp(value: unknown): string | undefined {
+  const ip = opt(value);
+  if (ip && !isIP(ip)) throw new Error(`Invalid IP address: ${ip}`);
+  return ip;
+}
+
+function severityValue(value: unknown): string {
+  const severity = String(value ?? "medium").trim().toLowerCase();
+  if (!["info", "low", "medium", "high", "critical"].includes(severity)) throw new Error(`Invalid severity: ${severity}`);
+  return severity;
+}
+
 // ---------------------------------------------------------------- JSON feeds
 
 function normalizeJsonObject(obj: Record<string, unknown>, index: number): NormalizedAlertInput {
@@ -142,22 +167,18 @@ function normalizeJsonObject(obj: Record<string, unknown>, index: number): Norma
     throw new Error(`Unrecognized JSON alert schema at index ${index}`);
   }
 
-  const alertId = isCanonical
-    ? String(obj.alert_id)
-    : String(obj.id);
-  const source = String(isCanonical ? obj.source : obj.sensor).trim().toLowerCase();
+  const alertId = required(isCanonical ? obj.alert_id : obj.id, "alert_id");
+  const source = required(isCanonical ? obj.source : obj.sensor, "source").toLowerCase();
   const timestamp = parseTimestamp(
     isCanonical ? obj.timestamp : obj["@timestamp"],
     `alert ${alertId}`
   );
   const user = opt(isCanonical ? obj.user : obj.account);
   const device = opt(isCanonical ? obj.device : obj.hostname);
-  const ip = opt(isCanonical ? obj.ip : obj.src_ip);
-  const event = normalizeEvent(String(isCanonical ? obj.event : obj.event_type));
-  const description = String(isCanonical ? obj.description : obj.message) || "";
-  const rawSeverity = String(
-    (isCanonical ? obj.raw_severity : obj.severity) ?? "medium"
-  ).toLowerCase();
+  const ip = checkedIp(isCanonical ? obj.ip : obj.src_ip);
+  const event = normalizeEvent(required(isCanonical ? obj.event : obj.event_type, "event"));
+  const description = required(isCanonical ? obj.description : obj.message, "description");
+  const rawSeverity = severityValue(isCanonical ? obj.raw_severity : obj.severity);
 
   return {
     alertId,
@@ -171,7 +192,7 @@ function normalizeJsonObject(obj: Record<string, unknown>, index: number): Norma
     description,
     rawSeverity,
     rawFormat: "json",
-    metadata: buildMetadata(ip, description),
+    metadata: buildMetadata(ip, description, typeof obj.metadata === "object" && obj.metadata !== null && !Array.isArray(obj.metadata) ? obj.metadata as Record<string, unknown> : undefined),
   };
 }
 
@@ -220,6 +241,7 @@ function splitCsvLine(line: string): string[] {
       cur += c;
     }
   }
+  if (inQuotes) throw new Error("Unclosed CSV quoted field");
   out.push(cur);
   return out;
 }
@@ -243,14 +265,14 @@ function parseCsv(raw: string): NormalizedAlertInput[] {
     if (parts.length < 9) {
       throw new Error(`CSV line ${i + 1} has ${parts.length} columns, expected >= 9`);
     }
-    const alertId = parts[0];
-    const source = parts[1].toLowerCase();
+    const alertId = required(parts[0], "alert_id");
+    const source = required(parts[1], "source").toLowerCase();
     const timestamp = parseTimestamp(parts[2], `CSV alert ${alertId}`);
     const user = opt(parts[3]);
     const device = opt(parts[4]);
-    const ip = opt(parts[5]);
-    const event = normalizeEvent(parts[6]);
-    const severity = parts[parts.length - 1].toLowerCase();
+    const ip = checkedIp(parts[5]);
+    const event = normalizeEvent(required(parts[6], "event"));
+    const severity = severityValue(parts[parts.length - 1]);
     const description = parts.slice(7, parts.length - 1).join(",");
 
     out.push({
@@ -301,7 +323,7 @@ function parseIntelReport(raw: string, seq: number): NormalizedAlertInput {
 
   const source = "intel-report";
   return {
-    alertId: `INTL-${String(seq).padStart(3, "0")}`,
+    alertId: `INTL-${createHash("sha256").update(raw).digest("hex").slice(0, 16)}`,
     source,
     sourceLabel: sourceLabelFor(source),
     timestamp,
@@ -327,7 +349,7 @@ function parseText(raw: string): NormalizedAlertInput[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const m = SATELLITE_RE.exec(trimmed);
-    if (!m) continue;
+    if (!m) throw new Error(`Unrecognized satellite line: ${trimmed.slice(0, 80)}`);
     const tag = m[SATELLITE_GROUP.tag];
     const ts = m[SATELLITE_GROUP.ts];
     const sev = m[SATELLITE_GROUP.sev];
@@ -335,7 +357,7 @@ function parseText(raw: string): NormalizedAlertInput[] {
     const text = m[SATELLITE_GROUP.text];
     const source = "satellite";
     out.push({
-      alertId: `SAT-${tag}-${String(seq).padStart(3, "0")}`,
+      alertId: `SAT-${tag}-${createHash("sha256").update(trimmed).digest("hex").slice(0, 12)}`,
       source,
       sourceLabel: sourceLabelFor(source),
       timestamp: parseTimestamp(ts, `satellite line ${seq + 1}`),
@@ -392,4 +414,30 @@ export function parseAndNormalize(
   if (fmt === "json") return parseJson(text);
   if (fmt === "csv") return parseCsv(text);
   return parseText(text);
+}
+
+/** Parse rows independently so one malformed alert cannot discard valid siblings. */
+export function normalizeBatch(raw: string, format: RequestedFormat = "auto"): {
+  alerts: NormalizedAlertInput[]; errors: { row: number; message: string }[];
+} {
+  const text = raw.trim().replace(/^\uFEFF/, "");
+  const fmt = format === "auto" ? detectFormat(text) : format;
+  const alerts: NormalizedAlertInput[] = [];
+  const errors: { row: number; message: string }[] = [];
+  let records: unknown[];
+  if (fmt === "json") {
+    const parsed = JSON.parse(text);
+    records = Array.isArray(parsed) ? parsed : [parsed];
+  } else if (fmt === "csv") {
+    records = text.split(/\r?\n/).filter((l) => l.trim());
+    if (/^alert_id\s*,/i.test(String(records[0]))) records.shift();
+  } else {
+    records = /^INTELLIGENCE REPORT/i.test(text) ? [text] : text.split(/\r?\n/).filter((l) => l.trim());
+  }
+  records.forEach((record, i) => {
+    try { alerts.push(...parseAndNormalize(fmt === "json" ? JSON.stringify(record) : String(record), fmt)); }
+    catch (error) { errors.push({ row: i + 1, message: error instanceof Error ? error.message : "Invalid alert" }); }
+  });
+  if (!records.length) throw new Error("No alerts in payload");
+  return { alerts, errors };
 }

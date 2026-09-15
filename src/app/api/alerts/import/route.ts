@@ -1,6 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { parseAndNormalize, type RequestedFormat } from "@/lib/normalizer";
+import { normalizeBatch, type RequestedFormat } from "@/lib/normalizer";
 import { toAlertDTO } from "@/lib/summary";
 import type { ImportPayload } from "@/lib/types";
 import type { Alert } from "@prisma/client";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 /** POST /api/alerts/import — normalize + insert a raw feed (no auto-correlation) */
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as ImportPayload | null;
+    const body = (await req.json().catch(() => null)) as ImportPayload | null;
     const raw = typeof body?.raw === "string" ? body.raw : "";
     const format: RequestedFormat =
       body?.format === "json" || body?.format === "csv" || body?.format === "text"
@@ -21,9 +22,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing 'raw' payload" }, { status: 400 });
     }
 
+    if (Buffer.byteLength(raw, "utf8") > 2 * 1024 * 1024) return NextResponse.json({ error: "Import is limited to 2 MB" }, { status: 413 });
+    if (body?.format && !["auto", "json", "csv", "text"].includes(body.format)) return NextResponse.json({ error: "Unsupported format" }, { status: 400 });
     let normalized;
+    let errors: { row: number; message: string }[] = [];
     try {
-      normalized = parseAndNormalize(raw, format);
+      const batch = normalizeBatch(raw, format);
+      normalized = batch.alerts;
+      errors = batch.errors;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to parse payload";
       return NextResponse.json(
@@ -33,7 +39,7 @@ export async function POST(req: Request) {
     }
 
     const inserted: Alert[] = [];
-    let failed = 0;
+    let failed = errors.length;
     for (const item of normalized) {
       try {
         const row = await db.alert.create({
@@ -53,7 +59,9 @@ export async function POST(req: Request) {
           },
         });
         inserted.push(row);
-      } catch {
+      } catch (err) {
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") throw err;
+        errors.push({ row: 0, message: `Duplicate alert ID: ${item.alertId}` });
         failed++; // duplicate alertId or constraint violation
       }
     }
@@ -61,6 +69,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       imported: inserted.length,
       failed,
+      errors,
       alerts: inserted.map(toAlertDTO),
       message:
         inserted.length > 0

@@ -1,13 +1,11 @@
 /**
  * SentinelAI correlator (spec §6).
  * Deterministic pair scoring + Union-Find transitive closure.
- * Rebuilds ALL incidents from ALL alerts. When a rebuilt incident group has
- * exactly the same alert membership as a pre-existing incident, the analyst
- * state (analyzed flag, BLUF, explanation, status, classification) is carried
- * over — re-correlation no longer destroys analyst/LLM work.
+ * Updates incidents in one transaction; retains stable IDs and analyst history.
  */
+import { analystActions, reviewedBluf } from "./analyst-verdict";
 import { db } from "@/lib/db";
-import { scoreIncident, type ScorerAlert } from "./scorer";
+import { scoreIncident, isLargeTransfer, type ScorerAlert } from "./scorer";
 import {
   CORRELATION_THRESHOLD,
   CORRELATION_WINDOW_MINUTES,
@@ -40,23 +38,16 @@ export function parseMetadata(raw: string): Record<string, unknown> {
 }
 
 function isFailedLogin(a: CorrAlert): boolean {
-  return /fail|brute/.test(a.event);
+  return /brute|(?:fail.*(?:login|auth)|(?:login|auth).*fail)/.test(a.event);
 }
 
 function isSuccessLogin(a: CorrAlert): boolean {
   return a.event.includes("successful_login") || a.event.includes("login_success");
 }
 
-function isLargeTransfer(a: CorrAlert): boolean {
-  return (
-    /download|transfer|exfil|upload/.test(a.event) ||
-    /(\d+(?:\.\d+)?)\s*gb/i.test(a.description) ||
-    /large data|mass file|exfiltration/i.test(a.description)
-  );
-}
-
 function maliciousIocValues(a: CorrAlert): Set<string> {
   const out = new Set<string>();
+  if (a.ip && isMaliciousIp(a.ip)) out.add(`ip:${a.ip}`);
   const iocs = (a.metadata as { iocs?: { ips?: string[]; domains?: string[]; hashes?: string[] } }).iocs;
   for (const v of iocs?.ips ?? []) if (isMaliciousIp(v)) out.add(`ip:${v}`);
   for (const v of iocs?.domains ?? []) if (isMaliciousDomain(v)) out.add(`dom:${v}`);
@@ -73,10 +64,11 @@ export function pairScore(a: CorrAlert, b: CorrAlert): number {
   if (a.user && b.user && a.user === b.user) s += 3;
   if (a.ip && b.ip && a.ip === b.ip) s += 3;
   if (a.device && b.device && a.device === b.device) s += 2;
-  if (isFailedLogin(a) && isSuccessLogin(b) && +a.timestamp <= +b.timestamp) s += 4;
-  else if (isFailedLogin(b) && isSuccessLogin(a) && +b.timestamp <= +a.timestamp) s += 4;
-  if (isSuccessLogin(a) && isLargeTransfer(b) && +a.timestamp <= +b.timestamp) s += 4;
-  else if (isSuccessLogin(b) && isLargeTransfer(a) && +b.timestamp <= +a.timestamp) s += 4;
+  const related = Boolean((a.user && a.user === b.user) || (a.device && a.device === b.device) || (a.ip && a.ip === b.ip));
+  if (related && isFailedLogin(a) && isSuccessLogin(b) && +a.timestamp <= +b.timestamp) s += 4;
+  else if (related && isFailedLogin(b) && isSuccessLogin(a) && +b.timestamp <= +a.timestamp) s += 4;
+  if (related && isSuccessLogin(a) && isLargeTransfer(b) && +a.timestamp <= +b.timestamp) s += 4;
+  else if (related && isSuccessLogin(b) && isLargeTransfer(a) && +b.timestamp <= +a.timestamp) s += 4;
   const aIocs = maliciousIocValues(a);
   if (aIocs.size > 0 && [...maliciousIocValues(b)].some((v) => aIocs.has(v))) s += 5;
   if (a.event === b.event) s += 1;
@@ -103,192 +95,71 @@ class UnionFind {
   }
 }
 
-/**
- * Rebuild every incident from every alert currently in the DB.
- * Alert sets that exactly match a pre-existing incident carry over their
- * analyst state (analyzed / BLUF / explanation / status / classification);
- * groups that changed recompute from scratch.
- */
+/** Correlate atomically, retaining stable case IDs and analyst history. */
 export async function runCorrelation(): Promise<CorrelateStats> {
-  const incidentsBefore = await db.incident.count();
-  await refreshIntel(); // merge analyst watchlist into runtime intel
-
-  // --- snapshot analyst/LLM state keyed by each incident's alert-id set ---
-  const [prevIncidents, prevAlertLinks, prevEvents] = await Promise.all([
-    db.incident.findMany({
-      select: {
-        id: true,
-        analyzed: true,
-        title: true,
-        severity: true,
-        threatScore: true,
-        confidence: true,
-        bluf: true,
-        explanation: true,
-        status: true,
-        classification: true,
-      },
-    }),
-    db.alert.findMany({
-      where: { incidentId: { not: null } },
-      select: { incidentId: true, id: true },
-    }),
-    db.incidentEvent.findMany({ orderBy: { createdAt: "asc" } }),
-  ]);
-  const prevById = new Map(prevIncidents.map((i) => [i.id, i]));
-  const alertIdsByIncident = new Map<string, string[]>();
-  for (const a of prevAlertLinks) {
-    if (!a.incidentId) continue;
-    const list = alertIdsByIncident.get(a.incidentId);
-    if (list) list.push(a.id);
-    else alertIdsByIncident.set(a.incidentId, [a.id]);
-  }
-  const eventsByIncident = new Map<string, typeof prevEvents>();
-  for (const e of prevEvents) {
-    const list = eventsByIncident.get(e.incidentId);
-    if (list) list.push(e);
-    else eventsByIncident.set(e.incidentId, [e]);
-  }
-  const carriedBySet = new Map<
-    string,
-    {
-      analyzed: boolean;
-      title: string;
-      severity: string;
-      threatScore: number;
-      confidence: number;
-      bluf: string | null;
-      explanation: string | null;
-      status: string;
-      classification: string;
-      events: typeof prevEvents;
-    }
-  >();
-  for (const [incidentDbId, ids] of alertIdsByIncident) {
-    const detail = prevById.get(incidentDbId);
-    if (!detail) continue;
-    carriedBySet.set(
-      [...ids].sort().join("|"),
-      {
-        analyzed: detail.analyzed,
-        title: detail.title,
-        severity: detail.severity,
-        threatScore: detail.threatScore,
-        confidence: detail.confidence,
-        bluf: detail.bluf,
-        explanation: detail.explanation,
-        status: detail.status,
-        classification: detail.classification,
-        events: eventsByIncident.get(incidentDbId) ?? [],
-      }
-    );
-  }
-
-  await db.alert.updateMany({ data: { incidentId: null } });
-  await db.incident.deleteMany({});
-
-  const rows = await db.alert.findMany({ orderBy: { timestamp: "asc" } });
-  const alerts: CorrAlert[] = rows.map((r) => ({
-    id: r.id,
-    alertId: r.alertId,
-    source: r.source,
-    sourceLabel: r.sourceLabel,
-    timestamp: r.timestamp,
-    user: r.user,
-    device: r.device,
-    ip: r.ip,
-    event: r.event,
-    description: r.description,
-    rawSeverity: r.rawSeverity,
-    metadata: parseMetadata(r.metadata),
-  }));
-
-  // --- pairwise linking ---
-  const uf = new UnionFind(alerts.length);
-  for (let i = 0; i < alerts.length; i++) {
-    for (let j = i + 1; j < alerts.length; j++) {
-      if (pairScore(alerts[i], alerts[j]) >= CORRELATION_THRESHOLD) {
-        uf.union(i, j);
+  await refreshIntel();
+  return db.$transaction(async (tx) => {
+    const previous = await tx.incident.findMany({ include: { alerts: true, events: true } });
+    const rows = await tx.alert.findMany({ orderBy: [{ timestamp: "asc" }, { id: "asc" }] });
+    const alerts: CorrAlert[] = rows.map((r) => ({ ...r, metadata: parseMetadata(r.metadata) }));
+    const uf = new UnionFind(alerts.length);
+    for (let i = 0; i < alerts.length; i++) {
+      for (let j = i + 1; j < alerts.length; j++) {
+        if (+alerts[j].timestamp - +alerts[i].timestamp > CORRELATION_WINDOW_MINUTES * 60_000) break;
+        if (pairScore(alerts[i], alerts[j]) >= CORRELATION_THRESHOLD) uf.union(i, j);
       }
     }
-  }
-
-  // --- collect groups (transitive closure), size >= 2 become incidents ---
-  const groups = new Map<number, number[]>();
-  for (let i = 0; i < alerts.length; i++) {
-    const root = uf.find(i);
-    const list = groups.get(root) ?? [];
-    list.push(i);
-    groups.set(root, list);
-  }
-  const incidentGroups = [...groups.values()]
-    .filter((idxs) => idxs.length >= 2)
-    .map((idxs) => idxs.map((i) => alerts[i]).sort((a, b) => +a.timestamp - +b.timestamp))
-    .sort((g1, g2) => +g1[0].timestamp - +g2[0].timestamp);
-
-  // --- persist incidents + attach alerts (renumber from INC-1001) ---
-  let seq = 1001;
-  let grouped = 0;
-  let preserved = 0;
-  for (const group of incidentGroups) {
-    const result = scoreIncident(group);
-    const incidentId = `INC-${seq}`;
-    const ids = group.map((a) => a.id);
-    const carried = carriedBySet.get([...ids].sort().join("|"));
-    if (carried) preserved++;
-    // Analyzed incidents keep the full LLM refinement (title, score, confidence,
-    // severity) — otherwise the deterministic baseline recomputes.
-    const keepLlm = carried?.analyzed === true;
-    await db.$transaction(async (tx) => {
-      const created = await tx.incident.create({
-        data: {
-          incidentId,
-          title: keepLlm ? carried!.title : result.title,
-          classification: carried?.classification ?? result.classification,
-          severity: keepLlm ? carried!.severity : result.severity,
-          threatScore: keepLlm ? carried!.threatScore : result.threatScore,
-          confidence: keepLlm ? carried!.confidence : result.confidence,
-          mitre: JSON.stringify(result.mitre),
-          bluf: carried?.bluf ?? result.bluf,
-          explanation: carried?.explanation ?? null,
-          evidence: JSON.stringify(result.evidence),
-          recommendedActions: JSON.stringify(deterministicActions(carried?.classification ?? result.classification, group)),
-          status: carried?.status ?? "Open",
-          analyzed: carried?.analyzed ?? false,
-          riskSignals: JSON.stringify(result.riskSignals),
-        },
-      });
-      await tx.alert.updateMany({
-        where: { id: { in: ids } },
-        data: { incidentId: created.id },
-      });
-      if (carried && carried.events.length > 0) {
-        // recreate the audit trail on the rebuilt row (original timestamps kept)
-        await tx.incidentEvent.createMany({
-          data: carried.events.map((e) => ({
-            incidentId: created.id,
-            kind: e.kind,
-            actor: e.actor,
-            detail: e.detail,
-            createdAt: e.createdAt,
-          })),
-        });
-      }
+    const groups = new Map<number, CorrAlert[]>();
+    alerts.forEach((a, i) => {
+      const key = uf.find(i);
+      groups.set(key, [...(groups.get(key) ?? []), a]);
     });
-    grouped += group.length;
-    seq++;
-  }
-
-  if (preserved > 0) {
-    console.log(`[correlator] preserved analyst state for ${preserved} unchanged incident group(s)`);
-  }
-
-  return {
-    incidentsBefore,
-    incidentsAfter: incidentGroups.length,
-    alertsGrouped: grouped,
-    alertsUngrouped: alerts.length - grouped,
-  };
+    const incidentGroups = [...groups.values()].filter((g) => g.length >= 2);
+    let seq = Math.max(1000, ...previous.map((i) => Number(i.incidentId.replace("INC-", "")) || 1000));
+    const claimed = new Set<string>();
+    for (const group of incidentGroups) {
+      const ids = new Set(group.map((a) => a.id));
+      const parents = previous.filter((p) => !claimed.has(p.id) && p.alerts.some((a) => ids.has(a.id)))
+        .sort((a, b) => b.alerts.filter((x) => ids.has(x.id)).length - a.alerts.filter((x) => ids.has(x.id)).length || a.incidentId.localeCompare(b.incidentId));
+      const existing = parents[0];
+      const result = scoreIncident(group);
+      const unchanged = existing && parents.length === 1 && existing.alerts.length === ids.size && existing.alerts.every((a) => ids.has(a.id));
+      const keepAnalysis = unchanged && existing.analyzed && existing.riskSignals === JSON.stringify(result.riskSignals);
+      const feedback = parents.flatMap((p) => p.events).filter((e) => e.kind === "classification").sort((a,b) => +b.createdAt - +a.createdAt)[0];
+      const classification = feedback ? previous.find((p) => p.id === feedback.incidentId)!.classification : result.classification;
+      const severity = classification === "False Positive" ? "False Positive" : result.severity === "False Positive" ? "Low" : result.severity;
+      const notes = parents.map((p) => p.explanation?.match(/(?:^|\n\n)\[[^\]\n]+\][\s\S]*/)?.[0]?.trim()).filter(Boolean);
+      const data = {
+        title: result.title, classification, severity,
+        threatScore: result.threatScore, confidence: result.confidence,
+        mitre: JSON.stringify(result.mitre),
+        bluf: (feedback ? reviewedBluf(result.bluf, classification) : result.bluf).replace(/^SEVERITY:.*$/m, `SEVERITY: ${severity}`),
+        explanation: [result.explanation, ...notes].join("\n\n"),
+        evidence: JSON.stringify(result.evidence),
+        recommendedActions: JSON.stringify(feedback ? analystActions(classification) : deterministicActions(classification, group)),
+        riskSignals: JSON.stringify(result.riskSignals), analyzed: false,
+      };
+      const incident = existing
+        ? keepAnalysis ? existing : await tx.incident.update({ where: { id: existing.id }, data })
+        : await tx.incident.create({ data: { ...data, incidentId: `INC-${++seq}` } });
+      claimed.add(incident.id);
+      await tx.alert.updateMany({ where: { id: { in: [...ids] } }, data: { incidentId: incident.id } });
+      for (const merged of parents.slice(1)) {
+        // Only retire a case if its entire membership merged into this case.
+        if (!merged.alerts.every((a) => ids.has(a.id))) continue;
+        await tx.incidentEvent.updateMany({ where: { incidentId: merged.id }, data: { incidentId: incident.id } });
+        await tx.incidentEvent.create({ data: { incidentId: incident.id, kind: "correlation", actor: "SentinelAI", detail: `Merged ${merged.incidentId} into ${incident.incidentId}; prior activity retained.` } });
+        await tx.incident.delete({ where: { id: merged.id } });
+        claimed.add(merged.id);
+      }
+      if (!keepAnalysis) await tx.incidentEvent.create({ data: {
+        incidentId: incident.id, kind: existing ? "correlation" : "created", actor: "SentinelAI",
+        detail: existing ? `Recomputed assessment from ${group.length} alerts; analyst status and notes retained.` : `Created from ${group.length} correlated alerts.`,
+      } });
+    }
+    // Preserve any prior case that loses correlation instead of deleting analyst work.
+    return { incidentsBefore: previous.length, incidentsAfter: await tx.incident.count(), alertsGrouped: await tx.alert.count({ where: { incidentId: { not: null } } }), alertsUngrouped: await tx.alert.count({ where: { incidentId: null } }) };
+  }, { maxWait: 10000, timeout: 30000 });
 }
 
 /** Default recommended actions for a fresh deterministic incident */

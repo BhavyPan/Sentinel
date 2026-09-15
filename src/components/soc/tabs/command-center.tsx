@@ -130,7 +130,7 @@ function KpiCard({
       )}>
         {/* header row: label + icon; value/sub get the full card width below (no truncation) */}
         <div className="flex items-start justify-between gap-2">
-          <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground sm:text-[11px]">{label}</p>
+          <p className="min-w-0 text-[10px] leading-4 font-medium uppercase tracking-[0.08em] text-muted-foreground sm:text-[11px]">{label}</p>
           <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105", t.icon)}>
             <Icon className="size-4.5" aria-hidden="true" />
           </span>
@@ -158,12 +158,13 @@ function KpiRow({ data }: { data: DashboardSummary }) {
   const sevCount = (name: string) =>
     data.alertsBySeverity.find((s) => s.severity === name)?.count ?? 0;
   return (
-    <section aria-label="Key metrics" className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
+    <section aria-label="Key metrics" className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-7">
       <KpiCard icon={Inbox} label="Total Alerts" value={data.totalAlerts} sub={`${data.correlatedAlerts} correlated`} tone="emerald" delay={0} />
-      <KpiCard icon={Siren} label="Active Incidents" value={data.totalIncidents} sub={`${c.open} open`} tone="red" delay={0.05} />
+      <KpiCard icon={Siren} label="Incidents" value={data.totalIncidents} sub={`${c.open} open`} tone="red" delay={0.05} />
       <KpiCard icon={ShieldAlert} label="Critical" value={c.critical} sub={`${sevCount("Critical")} critical alert${sevCount("Critical") === 1 ? "" : "s"}`} tone="red" delay={0.1} />
       <KpiCard icon={TriangleAlert} label="High" value={c.high} sub={`${sevCount("High")} high alert${sevCount("High") === 1 ? "" : "s"}`} tone="amber" delay={0.15} />
       <KpiCard icon={CircleAlert} label="Medium" value={c.medium} sub={`${sevCount("Medium")} medium alert${sevCount("Medium") === 1 ? "" : "s"}`} tone="yellow" delay={0.2} />
+      <KpiCard icon={CircleAlert} label="Low" value={c.low} sub={`${sevCount("Low")} low alerts`} tone="emerald" delay={0.22} />
       <KpiCard icon={CircleOff} label="False Positives" value={c.falsePositive} sub={`${sevCount("False Positive")} FP alert${sevCount("False Positive") === 1 ? "" : "s"}`} tone="slate" delay={0.25} />
     </section>
   );
@@ -852,7 +853,7 @@ function CopilotMiniPanel() {
 function CommandCenterSkeleton() {
   return (
     <div className="flex flex-col gap-4 sm:gap-6" aria-busy="true" aria-label="Loading dashboard">
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-7">
         {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-24 rounded-xl" />
         ))}
@@ -878,12 +879,18 @@ export function CommandCenter() {
     refetchInterval: 15_000,
   });
 
-  if (query.isLoading) return <CommandCenterSkeleton />;
-  if (query.isError) {
+  const incidentsQuery = useQuery({
+    queryKey: ["incidents"],
+    queryFn: () => apiGet<{ incidents: IncidentDTO[] }>("/api/incidents"),
+    refetchInterval: 15_000,
+  });
+
+  if (query.isLoading || incidentsQuery.isLoading) return <CommandCenterSkeleton />;
+  if (query.isError || incidentsQuery.isError) {
     return (
       <ErrorState
-        message={query.error instanceof Error ? query.error.message : undefined}
-        onRetry={() => query.refetch()}
+        message={(query.error ?? incidentsQuery.error)?.message}
+        onRetry={() => { query.refetch(); incidentsQuery.refetch(); }}
       />
     );
   }
@@ -892,14 +899,16 @@ export function CommandCenter() {
   }
 
   return (
-    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
+      <KpiRow data={query.data} />
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:gap-6">
       <div className="flex min-w-0 flex-1 flex-col gap-4 sm:gap-6">
-        <KpiRow data={query.data} />
         <ChartsRow data={query.data} />
         <WatchlistCard />
-        <IncidentTable incidents={query.data.topIncidents} />
+        <IncidentTable incidents={incidentsQuery.data?.incidents ?? []} />
       </div>
       <CopilotMiniPanel />
+      </div>
     </div>
   );
 }

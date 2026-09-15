@@ -4,7 +4,7 @@
  *
  * Stateless scenario engine: each call inspects recent alerts in the DB to pick
  * a believable next event (mostly benign noise, occasionally an escalating
- * attack story), then the new alert is correlated INCREMENTALLY — existing
+ * attack story), then the new alert is correlated through the shared engine — existing
  * incidents and their AI analysis / analyst feedback are never wiped.
  */
 import { db } from "@/lib/db";
@@ -14,13 +14,7 @@ import {
   getMaliciousIps,
 } from "./threat-intel";
 import { refreshIntel } from "./watchlist";
-import {
-  deterministicActions,
-  pairScore,
-  parseMetadata,
-  type CorrAlert,
-} from "./correlator";
-import { scoreIncident } from "./scorer";
+import { runCorrelation } from "./correlator";
 
 // ---------------------------------------------------------------- scenarios
 
@@ -281,14 +275,7 @@ export interface SimulateResult {
   } | null;
 }
 
-/**
- * Insert + incremental correlation.
- * - Scores the new alert against all alerts seen in the last 30 min.
- * - If the best partner belongs to an existing incident (score >= threshold),
- *   attach to THAT incident (preserve its analysis state).
- * - Else, if it links with >=1 ungrouped recent alert, create a NEW incident.
- * - Else leave ungrouped.
- */
+/** Insert through the normalizer and update cases with stable correlation. */
 export async function simulateOneAlert(): Promise<SimulateResult> {
   await refreshIntel(); // pick up analyst watchlist entries
   const { raw, note } = await generateRaw();
@@ -316,169 +303,14 @@ export async function simulateOneAlert(): Promise<SimulateResult> {
     },
   });
 
-  const toCorr = (r: {
-    id: string;
-    alertId: string;
-    source: string;
-    sourceLabel: string;
-    timestamp: Date;
-    user: string | null;
-    device: string | null;
-    ip: string | null;
-    event: string;
-    description: string;
-    rawSeverity: string;
-    metadata: string;
-  }): CorrAlert => ({
-    id: r.id,
-    alertId: r.alertId,
-    source: r.source,
-    sourceLabel: r.sourceLabel,
-    timestamp: r.timestamp,
-    user: r.user,
-    device: r.device,
-    ip: r.ip,
-    event: r.event,
-    description: r.description,
-    rawSeverity: r.rawSeverity,
-    metadata: parseMetadata(r.metadata),
-  });
-
-  const newAlert = toCorr({
-    id: created.id,
-    alertId: created.alertId,
-    source: created.source,
-    sourceLabel: created.sourceLabel,
-    timestamp: created.timestamp,
-    user: created.user,
-    device: created.device,
-    ip: created.ip,
-    event: created.event,
-    description: created.description,
-    rawSeverity: created.rawSeverity,
-    metadata: created.metadata,
-  });
-
-  const windowRows = await recentAlerts(CORRELATION_WINDOW_MINUTES * 60 + 30);
-  const incidentIdByAlert = new Map(windowRows.map((r) => [r.id, r.incidentId] as const));
-  const candidates = windowRows.filter((r) => r.id !== created.id).map(toCorr);
-
-  let bestScore = 0;
-  let bestPartner: CorrAlert | null = null;
-  const linkedUngrouped: CorrAlert[] = [];
-  for (const c of candidates) {
-    const s = pairScore(newAlert, c);
-    if (s >= CORRELATION_THRESHOLD) {
-      if (s > bestScore || bestPartner === null) {
-        bestScore = s;
-        bestPartner = c;
-      }
-      if (incidentIdByAlert.get(c.id) == null) linkedUngrouped.push(c);
-    }
-  }
-  // partner rows need incidentId — fetch it
-  let partnerIncidentId: string | null = null;
-  if (bestPartner) {
-    partnerIncidentId = incidentIdByAlert.get(bestPartner.id) ?? null;
-  }
-
-  if (bestPartner && partnerIncidentId) {
-    // attach to the existing incident
-    const incident = await db.incident.findUnique({
-      where: { id: partnerIncidentId },
-      include: { alerts: true },
-    });
-    await db.alert.update({ where: { id: created.id }, data: { incidentId: partnerIncidentId } });
-    if (incident) {
-      const group = [...incident.alerts.map(toCorr), newAlert].sort(
-        (a, b) => +a.timestamp - +b.timestamp
-      );
-      if (!incident.analyzed) {
-        // refresh deterministic fields only for un-analyzed incidents
-        const result = scoreIncident(group);
-        await db.incident.update({
-          where: { id: incident.id },
-          data: {
-            title: result.title,
-            classification: result.classification,
-            severity: result.severity,
-            threatScore: result.threatScore,
-            confidence: result.confidence,
-            mitre: JSON.stringify(result.mitre),
-            evidence: JSON.stringify(result.evidence),
-            recommendedActions: JSON.stringify(deterministicActions(result.classification, group)),
-            riskSignals: JSON.stringify(result.riskSignals),
-            bluf: result.bluf,
-          },
-        });
-      }
-      const fresh = await db.incident.findUnique({ where: { id: incident.id }, include: { alerts: true } });
-      return {
-        action: "attached",
-        alert: simAlertDTO(created),
-        note,
-        incident: fresh
-          ? {
-              id: fresh.id,
-              incidentId: fresh.incidentId,
-              severity: fresh.severity,
-              threatScore: fresh.threatScore,
-              alertCount: fresh.alerts.length,
-            }
-          : null,
-      };
-    }
-  }
-
-  if (bestPartner && linkedUngrouped.length > 0) {
-    // new incident from the new alert + its ungrouped partners
-    const group = [newAlert, ...linkedUngrouped].sort((a, b) => +a.timestamp - +b.timestamp);
-    const result = scoreIncident(group);
-    const nextSeq = 1001 + (await db.incident.count());
-    const createdIncident = await db.$transaction(async (tx) => {
-      const inc = await tx.incident.create({
-        data: {
-          incidentId: `INC-${nextSeq}`,
-          title: result.title,
-          classification: result.classification,
-          severity: result.severity,
-          threatScore: result.threatScore,
-          confidence: result.confidence,
-          mitre: JSON.stringify(result.mitre),
-          bluf: result.bluf,
-          explanation: null,
-          evidence: JSON.stringify(result.evidence),
-          recommendedActions: JSON.stringify(deterministicActions(result.classification, group)),
-          status: "Open",
-          analyzed: false,
-          riskSignals: JSON.stringify(result.riskSignals),
-        },
-      });
-      await tx.alert.updateMany({
-        where: { id: { in: [newAlert.id, ...linkedUngrouped.map((a) => a.id)] } },
-        data: { incidentId: inc.id },
-      });
-      return inc;
-    });
-    return {
-      action: "new-incident",
-      alert: simAlertDTO(created),
-      note,
-      incident: {
-        id: createdIncident.id,
-        incidentId: createdIncident.incidentId,
-        severity: createdIncident.severity,
-        threatScore: createdIncident.threatScore,
-        alertCount: group.length,
-      },
-    };
-  }
-
+  const priorIds = new Set((await db.incident.findMany({ select: { id: true } })).map((i) => i.id));
+  await runCorrelation();
+  const linked = await db.alert.findUnique({ where: { id: created.id }, include: { incident: { include: { _count: { select: { alerts: true } } } } } });
+  const incident = linked?.incident;
   return {
-    action: "ungrouped",
-    alert: simAlertDTO(created),
-    note,
-    incident: null,
+    action: incident ? priorIds.has(incident.id) ? "attached" : "new-incident" : "ungrouped",
+    alert: simAlertDTO(created), note,
+    incident: incident ? { id: incident.id, incidentId: incident.incidentId, severity: incident.severity, threatScore: incident.threatScore, alertCount: incident._count.alerts } : null,
   };
 }
 

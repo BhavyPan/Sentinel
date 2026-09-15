@@ -38,6 +38,7 @@ export interface ScorerResult {
   bluf: string;
   confidence: number;
   title: string;
+  explanation: string;
 }
 
 interface AlertMeta {
@@ -59,19 +60,16 @@ function parseMeta(metadata: ScorerAlert["metadata"]): AlertMeta {
 }
 
 function isFailedLogin(a: ScorerAlert): boolean {
-  return /fail|brute/.test(a.event);
+  return /brute|(?:fail.*(?:login|auth)|(?:login|auth).*fail)/.test(a.event);
 }
 
 function isSuccessLogin(a: ScorerAlert): boolean {
   return a.event.includes("successful_login") || a.event.includes("login_success");
 }
 
-function isLargeTransfer(a: ScorerAlert): boolean {
-  return (
-    /download|transfer|exfil|upload/.test(a.event) ||
-    /(\d+(?:\.\d+)?)\s*gb/i.test(a.description) ||
-    /large data|mass file|exfiltration/i.test(a.description)
-  );
+export function isLargeTransfer(a: ScorerAlert): boolean {
+  const gb = /(\d+(?:\.\d+)?)\s*gb/i.exec(a.description);
+  return Boolean((gb && Number(gb[1]) >= 1) || /large_data|bulk_download|exfil/.test(a.event) || /large data|mass file|exfiltration|unusual.*(?:transfer|download)|volume.*baseline/i.test(a.description));
 }
 
 function mentionedFailureCount(a: ScorerAlert): number {
@@ -82,6 +80,7 @@ function mentionedFailureCount(a: ScorerAlert): number {
 function maliciousIocValues(a: ScorerAlert): string[] {
   const meta = parseMeta(a.metadata);
   const out: string[] = [];
+  if (a.ip && isMaliciousIp(a.ip)) out.push(a.ip);
   for (const v of meta.iocs?.ips ?? []) if (isMaliciousIp(v)) out.push(v);
   for (const v of meta.iocs?.domains ?? []) if (isMaliciousDomain(v)) out.push(v);
   for (const v of meta.iocs?.hashes ?? []) if (isMaliciousHash(v)) out.push(v);
@@ -92,7 +91,7 @@ function hasPrivilegedAccount(alerts: ScorerAlert[]): string | null {
   for (const a of alerts) {
     const u = (a.user || "").toLowerCase();
     if (!u) continue;
-    if (PRIVILEGED_ACCOUNTS.includes(u) || u.includes("admin") || u.includes("svc_")) return a.user as string;
+    if (PRIVILEGED_ACCOUNTS.includes(u) || u.includes("admin") || (u.startsWith("svc_") || u.startsWith("svc-"))) return a.user as string;
   }
   return null;
 }
@@ -224,7 +223,7 @@ function buildBluf(
     admin: `Possible compromised privileged account ${ctx.user || "admin"} on ${ctx.device || "internal host"} with follow-on suspicious activity.`,
     c2: `Internal assets may be communicating with known malicious infrastructure (${ctx.iocValues[0] || "external IOC"}).`,
     exfil: `Unusual large data transfer suggests possible data exfiltration by ${ctx.user || ctx.device || "an internal account"}.`,
-    scan: `External host ${ctx.ip || ""} is scanning the perimeter; connection attempts appear blocked.`,
+    scan: `External host ${ctx.ip || ""} is scanning the perimeter; verify whether connection attempts were blocked.`,
     fp: "Activity matches known-benign patterns (scheduled/authorized/routine) and is likely a false positive.",
     generic: `Multiple correlated alerts indicate suspicious activity on ${ctx.device || ctx.user || "internal assets"} requiring review.`,
   };
@@ -266,7 +265,7 @@ export function scoreIncident(alerts: ScorerAlert[]): ScorerResult {
   const descriptions = sorted.map((a) => a.description.toLowerCase());
   const iocMatch = sorted.some((a) => {
     const m = parseMeta(a.metadata);
-    return m.iocMatch === true || maliciousIocValues(a).length > 0;
+    return maliciousIocValues(a).length > 0;
   });
   const iocValues = [...new Set(sorted.flatMap((a) => maliciousIocValues(a)))];
 
@@ -280,7 +279,7 @@ export function scoreIncident(alerts: ScorerAlert[]): ScorerResult {
 
   let successAfterFail = false;
   for (const s of sorted.filter(isSuccessLogin)) {
-    const fail = sorted.find((f) => isFailedLogin(f) && +f.timestamp <= +s.timestamp);
+    const fail = sorted.find((f) => isFailedLogin(f) && +f.timestamp <= +s.timestamp && Boolean((f.user && f.user === s.user) || (f.device && f.device === s.device) || (f.ip && f.ip === s.ip)));
     if (fail) {
       successAfterFail = true;
       break;
@@ -309,14 +308,14 @@ export function scoreIncident(alerts: ScorerAlert[]): ScorerResult {
   const threatScore = Math.min(100, score);
 
   // False-positive heuristics (spec F5)
-  const benignHit = descriptions.some((d) => BENIGN_KEYWORDS.some((k) => d.includes(k)));
+  const benignHit = descriptions.some((d) => BENIGN_KEYWORDS.some((k) => new RegExp(`\\b${k}\\b`).test(d)));
   const allInternal =
     !unusualIp && sorted.every((a) => !a.ip || isInternalIp(a.ip));
-  const fpHit =
-    threatScore < 45 &&
-    (benignHit ||
-      (allInternal && !iocMatch && failedEvents.length <= 3) ||
-      (distinctSources.includes("scanner") && benignHit));
+  const suspicious = sorted.some((a) => /powershell|injection|malware|beacon|c2|exfil|encoded|credential_dump/i.test(a.event + " " + a.description));
+  const harmlessPasswordMistakes = failedEvents.length > 0 && failedEvents.length <= 3 && mentionedMax <= 3 &&
+    sorted.every((a) => isFailedLogin(a) || isSuccessLogin(a)) && !privileged;
+  const fpHit = threatScore < 45 && !iocMatch && !suspicious && !largeSignal &&
+    (benignHit || (allInternal && harmlessPasswordMistakes));
 
   let severity: Severity;
   let classification: Classification;
@@ -337,11 +336,11 @@ export function scoreIncident(alerts: ScorerAlert[]): ScorerResult {
     classification = "Genuine Threat";
   } else {
     severity = "Low";
-    classification = "Under Review";
+    classification = "Genuine Threat";
   }
 
   // Confidence heuristic (LLM bump added later by the analyze route)
-  let confidence = 60;
+  let confidence = threatScore < 20 && !fpHit ? 35 : 60;
   if (iocMatch) confidence += 10;
   if (sorted.length >= 4) confidence += 10;
   if (distinctSources.length >= 3) confidence += 5;
@@ -399,5 +398,8 @@ export function scoreIncident(alerts: ScorerAlert[]): ScorerResult {
     bluf,
     confidence,
     title,
+    explanation: fpHit
+      ? `Likely false positive: ${harmlessPasswordMistakes ? "a small number of internal password mistakes" : "the supplied descriptions identify approved or routine activity"}. No malicious IOC or high-risk execution/transfer signal was found. Confirm the activity before closing.`
+      : `Likely genuine threat requiring review: ${evidence.join("; ")}. The deterministic score is ${threatScore}/100. ${threatScore < 45 ? "Evidence is limited; this assessment does not confirm compromise." : "Review the timeline and validate the recommended response."}`,
   };
 }

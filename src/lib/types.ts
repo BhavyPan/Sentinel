@@ -65,7 +65,7 @@ export interface IncidentDTO {
 /** Case-activity audit entry (who did what, when) */
 export interface IncidentEventDTO {
   id: string;
-  kind: "status" | "classification" | "note" | "analysis" | "created";
+  kind: "status" | "classification" | "note" | "analysis" | "created" | "correlation";
   actor: string;
   detail: string;
   createdAt: string;
@@ -161,6 +161,7 @@ export interface AnalyzeResult {
 /** POST /api/copilot/chat → response */
 export interface CopilotChatResult {
   reply: string;
+  mode: "llm" | "local";
 }
 
 /** POST /api/alerts/import body */
@@ -171,6 +172,7 @@ export interface ImportPayload {
 
 /** POST /api/alerts/import → response */
 export interface ImportResult {
+  errors?: { row: number; message: string }[];
   imported: number;
   failed: number;
   alerts: AlertDTO[];

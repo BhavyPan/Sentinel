@@ -190,10 +190,10 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   const hourKeys = new Map<string, { label: string; count: number }>();
   for (const a of alerts) {
     const d = a.timestamp;
-    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}-${d.getUTCHours()}`;
+    const key = d.toISOString().slice(0, 13);
     const prev = hourKeys.get(key);
     hourKeys.set(key, {
-      label: `${String(d.getUTCHours()).padStart(2, "0")}:00`,
+      label: `${d.toISOString().slice(5, 10)} ${String(d.getUTCHours()).padStart(2, "0")}:00Z`,
       count: (prev?.count ?? 0) + 1,
     });
   }

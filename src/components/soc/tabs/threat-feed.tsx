@@ -106,13 +106,15 @@ const DEFAULT_FILTERS: FeedFilters = {
   hideAck: false,
 };
 
-function buildAlertsUrl(filters: FeedFilters): string {
+function buildAlertsUrl(filters: FeedFilters, offset = 0): string {
   const params = new URLSearchParams();
   if (filters.search.trim()) params.set("search", filters.search.trim());
   if (filters.source !== "all") params.set("source", filters.source);
   if (filters.severity !== "all") params.set("severity", filters.severity);
   if (filters.correlated === "correlated") params.set("correlated", "true");
   if (filters.hideAck) params.set("ack", "unack");
+  params.set("limit", "50");
+  params.set("offset", String(offset));
   const qs = params.toString();
   return qs ? `/api/alerts?${qs}` : "/api/alerts";
 }
@@ -194,7 +196,7 @@ function ImportPanel() {
     onSuccess: (data) => {
       queryClient.invalidateQueries();
       toast.success(`Imported ${data.imported} alerts · ${data.failed} failed`, {
-        description: data.message || undefined,
+        description: data.errors?.length ? data.errors.slice(0, 3).map((e) => `Row ${e.row || "duplicate"}: ${e.message}`).join("; ") : data.message || undefined,
       });
       setRaw("");
       setFileName(null);
@@ -528,6 +530,9 @@ function FeedSkeleton() {
 
 export function ThreatFeed() {
   const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS);
+  const [page, setPage] = useState({ filterKey: "", offset: 0 });
+  const filterKey = JSON.stringify(filters);
+  const offset = page.filterKey === filterKey ? page.offset : 0;
   const [searchInput, setSearchInput] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [presets, setPresets] = useState<FeedPreset[]>(() => loadPresets());
@@ -580,9 +585,8 @@ export function ThreatFeed() {
   }, [searchInput]);
 
   const alertsQuery = useQuery({
-    queryKey: ["alerts", filters],
-    queryFn: () => apiGet<unknown>(buildAlertsUrl(filters)),
-    select: (d: unknown) => unwrapList<AlertDTO>(d, "alerts"),
+    queryKey: ["alerts", filters, offset],
+    queryFn: () => apiGet<{ alerts: AlertDTO[]; total: number; hasMore: boolean }>(buildAlertsUrl(filters, offset)),
   });
 
   // ack triage toggle
@@ -634,7 +638,7 @@ export function ThreatFeed() {
     return m;
   }, [incidentsQuery.data]);
 
-  const alerts = alertsQuery.data ?? [];
+  const alerts = alertsQuery.data?.alerts ?? [];
 
   // ---- selection helpers -------------------------------------------------
   const toggleSelect = (alert: AlertDTO) => {
@@ -1042,6 +1046,14 @@ export function ThreatFeed() {
           )}
         </Card>
       </motion.div>
+
+      <nav aria-label="Threat feed pagination" className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span aria-live="polite">{alertsQuery.data?.total ? `${offset + 1}–${offset + alerts.length} of ${alertsQuery.data.total} alerts` : "0 alerts"}</span>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" disabled={offset === 0 || alertsQuery.isFetching} onClick={() => { setSelectedIds(new Set()); setPage({ filterKey, offset: Math.max(0, offset - 50) }); }}>Previous</Button>
+          <Button variant="outline" size="sm" disabled={!alertsQuery.data?.hasMore || alertsQuery.isFetching} onClick={() => { setSelectedIds(new Set()); setPage({ filterKey, offset: offset + 50 }); }}>Next</Button>
+        </div>
+      </nav>
 
       {/* Save-preset dialog */}
       <Dialog open={presetDialogOpen} onOpenChange={setPresetDialogOpen}>

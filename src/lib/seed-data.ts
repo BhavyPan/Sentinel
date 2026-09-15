@@ -29,8 +29,7 @@ export interface DemoFeeds {
 }
 
 export function buildDemoFeeds(now: Date = new Date()): DemoFeeds {
-  void now;
-  const t = iso;
+  const t = (minutesAgo: number) => new Date(+now - minutesAgo * 60000).toISOString().replace(/\.\d{3}Z$/, "Z");
 
   // ---------- 1) SIEM JSON — canonical normalized-ish schema ----------
   const siem = [

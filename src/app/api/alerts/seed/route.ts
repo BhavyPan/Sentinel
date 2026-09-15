@@ -7,74 +7,33 @@ import { buildDemoFeeds } from "@/lib/seed-data";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-/** POST /api/alerts/seed — full demo reset: wipe, import all 5 feeds, correlate */
+/** Add the demo once; loading a demo never erases imported alerts or analyst work. */
 export async function POST() {
   try {
-    const existing = await db.alert.count();
-    if (existing >= 5) {
-      // Full demo reset: chat history + incidents + alerts
-      await db.chatMessage.deleteMany({});
-      await db.alert.updateMany({ data: { incidentId: null } });
-      await db.incident.deleteMany({});
-      await db.alert.deleteMany({});
+    const existingCount = await db.alert.count();
+    if (existingCount > 0) {
+      const stats = await runCorrelation();
+      return NextResponse.json({
+        seeded: 0,
+        correlated: stats.alertsGrouped,
+        incidents: stats.incidentsAfter,
+        message: `Dataset already contains ${existingCount} alerts. Existing records were retained.`,
+      });
     }
-
     const feeds = buildDemoFeeds();
-    const chunks = [
-      feeds.siemJson,
-      feeds.edrJson,
-      feeds.sensorCsv,
-      feeds.satelliteText,
-      feeds.intelText,
-    ];
-
-    let seeded = 0;
-    let failed = 0;
-    for (const chunk of chunks) {
-      let normalized;
-      try {
-        normalized = parseAndNormalize(chunk, "auto");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("[seed] chunk failed:", message);
-        failed++;
-        continue;
-      }
+    const normalized = Object.values(feeds).flatMap((raw) => parseAndNormalize(raw));
+    const seeded = await db.$transaction(async (tx) => {
+      let count = 0;
       for (const item of normalized) {
-        try {
-          await db.alert.create({
-            data: {
-              alertId: item.alertId,
-              source: item.source,
-              sourceLabel: item.sourceLabel,
-              timestamp: item.timestamp,
-              user: item.user ?? null,
-              device: item.device ?? null,
-              ip: item.ip ?? null,
-              event: item.event,
-              description: item.description,
-              rawSeverity: item.rawSeverity,
-              rawFormat: item.rawFormat,
-              metadata: JSON.stringify(item.metadata),
-            },
-          });
-          seeded++;
-        } catch {
-          failed++;
-        }
+        if (await tx.alert.findUnique({ where: { alertId: item.alertId } })) continue;
+        await tx.alert.create({ data: { ...item, metadata: JSON.stringify(item.metadata) } });
+        count++;
       }
-    }
-
-    const stats = await runCorrelation();
-
-    return NextResponse.json({
-      seeded,
-      correlated: stats.alertsGrouped,
-      incidents: stats.incidentsAfter,
-      message: `Seeded ${seeded} alert(s) from 5 demo feeds (${failed} failed). Correlated into ${stats.incidentsAfter} incident(s).`,
+      return count;
     });
+    const stats = await runCorrelation();
+    return NextResponse.json({ seeded, correlated: stats.alertsGrouped, incidents: stats.incidentsAfter, message: `Loaded ${seeded} alerts from five feed formats into ${stats.incidentsAfter} incidents.` });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Seed failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Demo import failed" }, { status: 500 });
   }
 }
