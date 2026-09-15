@@ -2,48 +2,42 @@
 
 ## System Architecture
 
-[Describe the overall architecture of your system. Replace the Mermaid diagram below with your actual architecture.]
+Sentinel2 leverages a modern, decoupled architecture designed for high performance and real-time responsiveness. The frontend handles real-time data visualization and user interaction, while the backend API integrates with PostgreSQL for persistence and the Groq API for rapid AI inference.
 
 ```mermaid
 graph TD
-    A[User / Browser] -->|HTTP| B[Frontend - React]
-    B -->|REST API| C[Backend - FastAPI]
-    C -->|SDK| D[watsonx.ai]
-    C -->|Query| E[PostgreSQL]
-    C -->|Publish| F[Slack Webhook]
-    D -->|Inference Result| C
+    A[User / SOC Analyst] -->|HTTPS| B[Next.js Frontend (React/Tailwind)]
+    B <-->|REST API / Server Actions| C[Next.js API Routes]
+    C -->|Prisma ORM| D[Supabase PostgreSQL DB]
+    C -->|LLM Inference API| E[Groq AI (Llama 3)]
+    F[Security Sensors / SIEM] -->|Ingestion API| C
 ```
 
 ## Components
 
 | Component | Technology | Responsibility |
 |---|---|---|
-| Frontend | [e.g., React 18] | [e.g., Dashboard UI, user interaction] |
-| Backend API | [e.g., FastAPI] | [e.g., Business logic, orchestration] |
-| AI / ML | [e.g., watsonx.ai] | [e.g., Anomaly scoring, classification] |
-| Database | [e.g., PostgreSQL] | [e.g., Storing pipeline events and scores] |
-| Notifications | [e.g., Slack API] | [e.g., Alerting on threshold breaches] |
+| Frontend | Next.js 15, React 19, Tailwind CSS | Rendering the interactive SOC dashboard, charts, and copilot UI. |
+| Backend API | Next.js API Routes / Server Actions | Handling business logic, incident correlation, and authentication. |
+| AI / Copilot | Groq API | Rapid analysis of incidents, BLUF generation, and conversational copilot support. |
+| Database | Supabase (PostgreSQL), Prisma | Storing alerts, incidents, and threat intelligence data. |
 
 ## Data Flow
 
-[Describe how data moves through your system from input to output.]
-
-1. [e.g., Pipeline logs are ingested via a webhook from GitHub Actions]
-2. [e.g., Logs are preprocessed and chunked into 512-token segments]
-3. [e.g., Each chunk is sent to the watsonx.ai inference endpoint]
-4. [e.g., Anomaly scores are stored in PostgreSQL]
-5. [e.g., The React dashboard polls the API every 30 seconds to refresh]
+1. **Ingestion:** Raw security alerts (from EDR, Firewall, DLP) are ingested into the system (simulated/seeded via API).
+2. **Correlation:** The backend evaluates incoming alerts and groups related events (by IP, user, or timeframe) into consolidated incidents.
+3. **AI Analysis:** The incident payload is sent to the Groq API. The LLM extracts MITRE ATT&CK tactics, assigns a confidence score, and generates a Bottom Line Up Front (BLUF) summary.
+4. **Persistence:** The incident, along with its AI analysis and metadata, is saved to the Supabase PostgreSQL database.
+5. **Visualization:** The SOC analyst views the dashboard where data is fetched and displayed using interactive tables and charts.
 
 ## Security Considerations
 
-[Note any security decisions relevant to the architecture — even if basic.]
-
-- [e.g., API keys stored in environment variables, never committed to git]
-- [e.g., All API routes require a Bearer token]
-- [e.g., Database credentials rotated via IBM Secrets Manager]
+- **Environment Variables:** Sensitive keys (e.g., `DATABASE_URL`, `AI_API_KEY`) are stored in `.env.local` and never committed to version control.
+- **Data Privacy:** Incident analysis relies on metadata without exposing raw PII directly to the AI model where possible.
+- **Secure Deployment:** Deployed securely on Vercel with encrypted environment variables.
 
 ## Scalability Notes
 
-[Optional: how would this scale beyond the hackathon prototype?]
-
-[e.g., "The FastAPI backend is stateless and could be horizontally scaled behind a load balancer. The watsonx.ai calls are the bottleneck and would benefit from request batching."]
+- **Stateless Backend:** The Next.js API is completely stateless, meaning it scales horizontally automatically on Vercel's edge network.
+- **High-Performance Inference:** Utilizing Groq's LPU architecture ensures that even with a surge in incidents, the AI analysis remains virtually instantaneous without becoming a bottleneck.
+- **Connection Pooling:** Supabase and Prisma handle connection pooling, allowing the database to efficiently manage high volumes of simultaneous connections from serverless functions.

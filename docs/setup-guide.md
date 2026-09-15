@@ -1,79 +1,65 @@
 # Setup Guide
 
-> **This file is read by the automated evaluation pipeline. Be precise and complete.**
-
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
 
-- [ ] [e.g., Python 3.11+]
-- [ ] [e.g., Node.js 18+]
-- [ ] [e.g., Docker Desktop]
-- [ ] [e.g., An IBM Cloud account with watsonx.ai access]
+- Node.js 18+
+- npm (or yarn/pnpm/bun)
+- A Supabase account (for PostgreSQL database)
+- A Groq account (for AI API access)
+- Git
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in the values:
+Copy `.env.example` to `.env.local` and fill in the values:
 
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
 
 | Variable | Description | Required |
 |---|---|---|
-| `WATSONX_API_KEY` | Your IBM watsonx.ai API key | Yes |
-| `WATSONX_PROJECT_ID` | Your watsonx.ai project ID | Yes |
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `SLACK_WEBHOOK_URL` | Slack webhook for alerts | No |
+| `DATABASE_URL` | Your Supabase PostgreSQL connection string (Transaction connection) | Yes |
+| `DIRECT_URL` | Your Supabase PostgreSQL connection string (Session connection) | Yes |
+| `AI_API_KEY` | Your Groq API key | Yes |
+| `AI_MODEL` | Set to `llama-3.1-8b-instant` (or desired Groq model) | Yes |
 
 ## Installation
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/[your-org]/[your-repo].git
-cd [your-repo]
+git clone https://github.com/BhavyPan/Sentinel2.git
+cd Sentinel2
 
-# 2. Install backend dependencies
-[your command — e.g.: pip install -r requirements.txt]
+# 2. Install dependencies
+npm install
 
-# 3. Install frontend dependencies (if applicable)
-[your command — e.g.: cd frontend && npm install]
-
-# 4. Set up the database (if applicable)
-[your command — e.g.: python manage.py migrate]
+# 3. Generate Prisma Client and Push Schema
+npm run db:generate
+npm run db:push
 ```
 
 ## Running the Application
 
 ```bash
-# Start the backend
-[your command — e.g.: uvicorn app.main:app --reload]
-
-# Start the frontend (in a separate terminal, if applicable)
-[your command — e.g.: cd frontend && npm run dev]
+# Start the development server
+npm run dev
 ```
 
-The application will be available at: `http://localhost:[PORT]`
+The application will be available at: `http://localhost:3000`
 
-## Running Tests
+## Seeding Demo Data
 
-```bash
-[your test command — e.g.: pytest tests/ -v]
-```
+To see the dashboard in action with realistic alerts and incidents, you can use the built-in API seed routes via the dashboard UI or manually triggering them:
 
-## Quick Demo (Optional)
-
-If you have a demo script or sample data to showcase the project quickly:
-
-```bash
-[e.g.: python demo/seed_demo_data.py]
-[e.g.: open http://localhost:8000/demo]
-```
+1. Navigate to `http://localhost:3000`
+2. You can trigger alert generation or test the incident correlation logic by simulating events using the UI elements if provided, or by hitting the API routes directly (e.g., POST `/api/alerts/seed`).
 
 ## Troubleshooting
 
 | Issue | Solution |
 |---|---|
-| [e.g., `ModuleNotFoundError`] | [e.g., Run `pip install -r requirements.txt` again] |
-| [e.g., Database connection refused] | [e.g., Ensure PostgreSQL is running: `docker compose up db`] |
-| [e.g., watsonx.ai 401 error] | [e.g., Check `WATSONX_API_KEY` in your `.env` file] |
+| `PrismaClientInitializationError` | Ensure your `DATABASE_URL` and `DIRECT_URL` are correct and your Supabase database is active. |
+| AI features are failing or returning empty | Check that your `AI_API_KEY` is valid and the `AI_MODEL` is correctly set in `.env.local`. |
+| Port 3000 is already in use | Run `npm run dev -- -p 3001` to start on a different port. |
