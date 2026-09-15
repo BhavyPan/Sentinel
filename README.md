@@ -1,6 +1,4 @@
-# 🚀 [Your Project Title Here]
-
-> ⚠️ **Replace everything in `[ ]` brackets with your actual content before submission.**
+# 🚀 Sentinel2: AI-Powered SOC Dashboard
 
 ---
 
@@ -8,10 +6,10 @@
 
 | Field | Value |
 |---|---|
-| **Team Name** | [Your Team Name] |
-| **Track** | [AI / DevOps / Sustainability / Open] |
-| **Team Lead** | [Name] — [email@ibm.com] |
-| **Members** | [Name 1], [Name 2], [Name 3] |
+| **Team Name** | Sentinel |
+| **Track** | AI / Security |
+| **Team Lead** | BhavyPan |
+| **Members** | BhavyPan |
 
 ---
 
@@ -19,7 +17,7 @@
 
 > In 2–3 sentences: What problem does your project solve? Who experiences this problem?
 
-[Describe the real-world problem your project addresses. Be specific about who the user is and what pain point they face.]
+Security Operations Center (SOC) analysts are overwhelmed by the sheer volume of security alerts, many of which are false positives or low-priority events. Sentinel2 addresses this by providing an AI-driven dashboard that correlates alerts into incidents, triages them using Groq-powered AI, and provides actionable summaries, reducing alert fatigue and enabling analysts to focus on genuine threats.
 
 ---
 
@@ -27,17 +25,16 @@
 
 > In 2–3 sentences: What did you build? How does it solve the problem above?
 
-[Describe your solution clearly. Explain the core mechanism — what makes it work.]
+We built a modern, responsive web application using Next.js and Tailwind CSS that ingests security alerts and groups them into incidents. It integrates an AI copilot using the Groq API to analyze incidents, summarize the "Bottom Line Up Front" (BLUF), and suggest immediate remediation steps, drastically reducing investigation times.
 
 ---
 
 ## ✨ Key Features
 
-- **Feature 1:** [Brief description — e.g., "Real-time anomaly detection using watsonx.ai"]
-- **Feature 2:** [Brief description]
-- **Feature 3:** [Brief description]
-- **Feature 4:** [Optional]
-- **Feature 5:** [Optional]
+- **Real-time Incident Dashboard:** View and manage alerts, correlated incidents, and metrics in an intuitive UI.
+- **AI-Powered Analysis:** Leverages Groq AI to provide BLUF summaries, extract MITRE ATT&CK tactics, and suggest mitigation steps for each incident.
+- **Incident Correlation:** Automatically groups related alerts into single manageable incidents to reduce noise.
+- **Interactive Copilot:** A chat-based assistant to help analysts query security events and ask questions directly within the dashboard.
 
 ---
 
@@ -45,50 +42,46 @@
 
 | Category | Technologies |
 |---|---|
-| **Languages** | [e.g., Python, TypeScript] |
-| **Frameworks** | [e.g., FastAPI, React] |
-| **IBM Technologies** | [e.g., watsonx.ai, IBM Bob, IBM Cloud] |
-| **Databases** | [e.g., PostgreSQL, Redis] |
-| **Other** | [e.g., Docker, GitHub Actions] |
+| **Languages** | TypeScript |
+| **Frameworks** | Next.js, React, Tailwind CSS |
+| **Databases** | Supabase (PostgreSQL), Prisma ORM |
+| **Other** | Groq API, Vercel |
 
 ---
 
 ## 📁 Repository Structure
 
 ```
-├── src/                  # All source code
-├── docs/                 # Written documentation
-│   ├── problem-statement.md
-│   ├── solution-overview.md
-│   ├── architecture.md
-│   └── setup-guide.md
+├── src/                  # All source code (Next.js App Router)
+├── prisma/               # Database schema and migrations
 ├── demo/                 # Demo artifacts
 │   ├── screenshots/      # App screenshots
-│   └── demo-video-link.txt  # Link to demo video
+│   └── live-demo-url.txt # Link to deployed demo
 ├── presentation/         # Slide deck
-└── submission.yaml       # Structured submission metadata
+└── README.md             # This file
 ```
 
 ---
 
 ## ⚡ How to Run
 
-> **Copy these exact steps from your [`docs/setup-guide.md`](docs/setup-guide.md)**
-
 ```bash
 # 1. Clone the repo
-git clone https://github.com/[your-repo].git
-cd [your-repo]
+git clone https://github.com/BhavyPan/Sentinel2.git
+cd Sentinel2
 
 # 2. Install dependencies
-[your install command here]
+npm install
 
 # 3. Configure environment
-cp .env.example .env
-# Edit .env with your values
+cp .env.example .env.local
+# Edit .env.local with your Supabase DATABASE_URL and Groq AI_API_KEY
 
-# 4. Run the project
-[your run command here]
+# 4. Generate Prisma Client
+npm run db:generate
+
+# 5. Run the project
+npm run dev
 ```
 
 ---
@@ -97,25 +90,10 @@ cp .env.example .env
 
 | Artifact | Link |
 |---|---|
-| 📹 Demo Video | [See demo/demo-video-link.txt](demo/demo-video-link.txt) |
-| 🌐 Live Demo | [See demo/live-demo-url.txt](demo/live-demo-url.txt) |
-| 🖼️ Screenshots | [See demo/screenshots/](demo/screenshots/) |
-| 📊 Presentation | [See presentation/slides.pdf](presentation/) |
-
----
-
-## ⚠️ Known Limitations
-
-> Be honest — judges appreciate transparency over overclaiming.
-
-- [Limitation 1: e.g., "Authentication is mocked — not production-ready"]
-- [Limitation 2: e.g., "Only tested on Chrome"]
-- [Limitation 3: e.g., "Feature X is scaffolded but not fully implemented"]
+| 🌐 Live Demo | [https://sentinel2-dun.vercel.app](https://sentinel2-dun.vercel.app) |
 
 ---
 
 ## 🏅 What We're Most Proud Of
 
-[Tell the judges what part of your submission is strongest and worth paying close attention to.]
-
----
+Integrating lightning-fast AI capabilities via Groq directly into the incident response workflow, enabling analysts to go from raw alert data to an actionable summary in seconds.
